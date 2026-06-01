@@ -1,0 +1,98 @@
+"""01-asyncflow-adaptive-search.py
+
+Adaptive search for the minimum of f(x) = (x - TARGET)² + noise.
+
+ADL concepts demonstrated
+  - Operator: @tool, @observe, @goals
+  - Policy:   @decide — the single explicit entry point
+  - op.policy = SearchPolicy(op) — one clean assign
+
+Usage:
+    python 01-asyncflow-adaptive-search.py
+"""
+
+import asyncio
+import random
+from concurrent.futures import ThreadPoolExecutor
+
+from radical.asyncflow import LocalExecutionBackend, WorkflowEngine
+
+from radical.adl import Decision, Operator, Policy, decide, goals, observe, tool
+from radical.adl.goals import ScientificGoal
+
+TARGET     = 3.14159
+MIN_RADIUS = 0.005
+
+
+class SearchOperator(Operator):
+
+    center:  float = 0.0
+    radius:  float = 5.0
+    history: list  = []
+
+    @goals
+    def convergence_criteria(self):
+        return ScientificGoal(name="converged", metric="radius",
+                              threshold=MIN_RADIUS, direction="minimize")
+
+    @tool
+    async def evaluate(self, x: float, seed: int = 0) -> dict:
+        rng = random.Random(seed)
+        return {"x": x, "value": (x - TARGET) ** 2 + rng.gauss(0, 0.03)}
+
+    @observe
+    def extract(self, snapshot) -> dict:
+        new_results = [v for k, v in snapshot.observations.items()
+                       if k.startswith("result.") and isinstance(v, dict) and "x" in v]
+        history = list(snapshot.objectives.get("history", [])) + new_results
+        best    = min(history, key=lambda r: r["value"]) if history else None
+        return {"new_results": new_results, "history": history,
+                "center": snapshot.objectives.get("center", 0.0),
+                "radius": snapshot.objectives.get("radius", 5.0),
+                "best": best, "cycle": snapshot.cycle}
+
+
+class SearchPolicy(Policy):
+
+    def __init__(self, op: SearchOperator) -> None:
+        super().__init__()
+        self._tools = op.get_tools()
+
+    @decide
+    async def run(self, obs: dict) -> Decision:
+        if obs["cycle"] >= 15:
+            return Decision(stop=True)
+
+        if obs["best"] is not None:
+            new_c, new_r = obs["best"]["x"], obs["radius"] * 0.5
+            return Decision(actions=[
+                self._tools.update_state("history", obs["history"]),
+                self._tools.update_state("center",  new_c),
+                self._tools.update_state("radius",  new_r),
+                *self._spawn(new_c, new_r, obs["cycle"]),
+            ])
+
+        return Decision(actions=self._spawn(obs["center"], obs["radius"], obs["cycle"]))
+
+    def _spawn(self, c, r, cyc):
+        return [self._tools.spawn_task("evaluate", x=c + r*(2*i/3-1), seed=cyc*4+i)
+                for i in range(4)]
+
+
+async def main():
+    backend = await LocalExecutionBackend(ThreadPoolExecutor())
+    engine  = await WorkflowEngine.create(backend)
+
+    op        = SearchOperator(engine)
+    op.policy = SearchPolicy(op)
+
+    async for snapshot in op.run():
+        print(f"cycle {snapshot.cycle:2d}  center={op.center:+.5f}  radius={op.radius:.5f}")
+
+    best = min(op.history, key=lambda r: r["value"])
+    print(f"\nbest x={best['x']:.6f}  error={abs(best['x'] - TARGET):.6f}  cycles={op.state.cycle}")
+    await engine.shutdown()
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
