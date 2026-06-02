@@ -333,25 +333,6 @@ class Operator:
             return toolset
         return toolset.get_schema(format)
 
-    # ── Observe ───────────────────────────────────────────────────────────────
-
-    def _default_observe(self, snapshot: Snapshot) -> dict:
-        """Default observation extractor used when no ``@observe`` method is defined."""
-        obs: dict[str, Any] = {
-            "new_results": [
-                v for k, v in snapshot.observations.items()
-                if k.startswith("result.") and isinstance(v, dict)
-            ],
-            "failed": [
-                k for k, v in snapshot.runtime.items() if v == "FAILED"
-            ],
-            "cycle": snapshot.cycle,
-        }
-        for metric in ("cpu_percent", "memory_percent", "gpu_percent"):
-            if metric in snapshot.runtime:
-                obs[metric] = snapshot.runtime[metric]
-        return obs
-
     # ── Decide ────────────────────────────────────────────────────────────────
 
     async def _decide(self, obs: dict) -> Decision:
@@ -457,16 +438,19 @@ class Operator:
 
                 snapshot   = self.state.snapshot()
                 observe_fn = type(self)._adl_observe_fn             # 2. OBSERVE
-                if observe_fn is not None:
-                    obs = observe_fn(self, snapshot)
-                    if not isinstance(obs, dict):
-                        raise TypeError(
-                            f"@observe method '{observe_fn.__name__}' on "
-                            f"{type(self).__name__} must return dict, "
-                            f"got {type(obs).__name__}"
-                        )
-                else:
-                    obs = self._default_observe(snapshot)
+                if observe_fn is None:
+                    raise TypeError(
+                        f"Operator '{self.operator_id}' ({type(self).__name__}) has no "
+                        "@observe method. Every Operator subclass must define one — "
+                        "ADL has no default observation."
+                    )
+                obs = observe_fn(self, snapshot)
+                if not isinstance(obs, dict):
+                    raise TypeError(
+                        f"@observe method '{observe_fn.__name__}' on "
+                        f"{type(self).__name__} must return dict, "
+                        f"got {type(obs).__name__}"
+                    )
 
                 try:
                     decision = await self._decide(obs)              # 3. DECIDE

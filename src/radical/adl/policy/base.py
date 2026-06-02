@@ -6,6 +6,7 @@ import logging
 from typing import TYPE_CHECKING, Any, Callable
 
 from radical.adl.decision import Decision
+from radical.adl.errors import PolicyError
 
 log = logging.getLogger(__name__)
 
@@ -97,4 +98,8 @@ class Policy:
                 log.exception("Policy: primary raised; trying fallback")
         if self._fallback is not None:
             return await self._fallback.decide(obs)
-        return Decision()
+        raise PolicyError(
+            f"Policy '{type(self).__name__}' has no @decide method and no "
+            "primary/fallback composition. Either decorate a method with @decide "
+            "or use Policy(primary=..., fallback=...)."
+        )
