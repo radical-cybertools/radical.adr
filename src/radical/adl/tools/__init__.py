@@ -45,13 +45,19 @@ class ToolSet:
 
     # ── Built-in tools ────────────────────────────────────────────────────────
 
-    def spawn_task(self, name: str, **kwargs: Any) -> Action:
-        """Spawn a registered AsyncFlow task by name."""
-        return Action(kind=ActionKind.SPAWN_TASK, task_name=name, task_kwargs=kwargs)
+    def spawn_task(self, name: str, depends_on: "list[str] | None" = None, **kwargs: Any) -> Action:
+        """Spawn a registered @tool by name.
 
-    def spawn_workflow(self, name: str, **kwargs: Any) -> Action:
-        """Spawn a registered AsyncFlow workflow block (SPAWN_BLOCK) by name."""
-        return Action(kind=ActionKind.SPAWN_BLOCK, task_name=name, task_kwargs=kwargs)
+        ``depends_on`` is a list of task UIDs that must be DONE before this
+        tool is invoked — the resolved futures are passed as positional args.
+        """
+        return Action(kind=ActionKind.SPAWN_TASK, task_name=name,
+                      task_kwargs=kwargs, depends_on=depends_on or [])
+
+    def spawn_workflow(self, name: str, depends_on: "list[str] | None" = None, **kwargs: Any) -> Action:
+        """Spawn a @tool method that returns a block Future (alias for spawn_task)."""
+        return Action(kind=ActionKind.SPAWN_TASK, task_name=name,
+                      task_kwargs=kwargs, depends_on=depends_on or [])
 
     def cancel_task(self, uid: str) -> Action:
         """Cancel a running or pending task by its UID."""
@@ -73,7 +79,9 @@ class ToolSet:
         fn = tool_fns.get(name)
         if fn is not None:
             def _spawn(**kwargs: Any) -> Action:
-                return Action(kind=ActionKind.SPAWN_TASK, task_name=name, task_kwargs=kwargs)
+                deps = kwargs.pop("depends_on", [])
+                return Action(kind=ActionKind.SPAWN_TASK, task_name=name,
+                              task_kwargs=kwargs, depends_on=deps)
             _spawn.__name__ = name
             _spawn.__doc__  = fn.__doc__ or f"Spawn the '{name}' task."
             return _spawn

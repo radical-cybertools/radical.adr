@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import random
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ProcessPoolExecutor
 
 from radical.asyncflow import LocalExecutionBackend, WorkflowEngine
 
@@ -94,7 +94,7 @@ async def run_one(engine, start_center: float, op_id: str) -> dict:
 
 
 async def main():
-    backend = await LocalExecutionBackend(ThreadPoolExecutor(max_workers=8))
+    backend = await LocalExecutionBackend(ProcessPoolExecutor(max_workers=8))
     engine  = await WorkflowEngine.create(backend)
 
     starts  = [-5.0, 0.0, 5.0, 10.0]

@@ -2,29 +2,30 @@
 
 Usage (subclass-based)::
 
-    from radical.adl import Operator, tool, loop, Decision, Action, ActionKind
+    from radical.adl import Operator, tool, Decision
     from radical.adl.goals import ScientificGoal
-    from radical.adl.policy import RulePolicy
 
     class SearchOperator(Operator):
-        goals = [ScientificGoal(name="converged", metric="radius",
-                                threshold=0.005, direction="minimize")]
-
         center: float = 0.0
         radius: float = 10.0
         history: list = []
 
-        @tool
-        async def evaluate(self, x: float, seed: int = 0) -> dict: ...
+        @goals
+        def convergence_criteria(self):
+            return ScientificGoal(name="converged", metric="radius",
+                                  threshold=0.005, direction="minimize")
 
-        @loop(policy=RulePolicy([
-            (lambda obs: bool(obs["new_results"]),
-             lambda obs: Decision(actions=[...])),
-            (lambda obs: True,
-             lambda obs: Decision(stop=True)),
-        ]))
-        async def adaptive_cycle(self, obs: dict) -> Decision:
-            return Decision(stop=True)
+        @tool
+        async def evaluate(self, x: float, seed: int = 0) -> dict:
+            # Local execution — returns plain dict
+            import random
+            rng = random.Random(seed)
+            return {"x": x, "value": (x - 3.14) ** 2 + rng.gauss(0, 0.03)}
+
+        # Or dispatch to AsyncFlow backend:
+        #   @tool
+        #   async def evaluate(self, x: float, seed: int = 0) -> dict:
+        #       return self.engine.function_task(_eval_impl)(x=x, seed=seed)
 
     op = SearchOperator(engine)
     async for snapshot in op.run():
@@ -34,8 +35,6 @@ Usage (subclass-based)::
 from __future__ import annotations
 
 import asyncio
-import functools
-import inspect
 import logging
 from typing import TYPE_CHECKING, Any, AsyncIterator, Callable
 
@@ -61,26 +60,45 @@ _MISSING       = object()  # sentinel for "no default value"
 _RESERVED = frozenset({
     "operator_id", "engine", "parent", "observer",
     "state", "inbox", "children",
-    "task_registry", "workflow_registry",
-    "_stop_event", "_watcher_tasks", "_adl_toolset", "_policy", "_runtime_goals",
+    "_stop_event", "_adl_toolset", "_policy", "_runtime_goals", "_block_factory",
 })
 
 
 # ── Module-level decorators ───────────────────────────────────────────────────
 
 def tool(fn: Callable) -> Callable:
-    """Mark a method as an ADL tool (spawnable as an AsyncFlow task).
+    """Mark a method as an ADL tool — callable by the policy via the ToolSet.
 
-    The method body is the task implementation.  When spawned, ``self`` is
-    excluded — the method must not depend on operator instance state.
+    The method runs in the operator's event loop with ``self`` available.
+    Return a plain value for local execution, or return an ``asyncio.Future``
+    to dispatch work to an AsyncFlow backend:
 
-    Example::
+    Local (runs inline)::
 
         @tool
         async def evaluate(self, x: float, seed: int = 0) -> dict:
             import random
             rng = random.Random(seed)
             return {"x": x, "value": (x - 3.14) ** 2 + rng.gauss(0, 0.03)}
+
+    Backend task (dispatches to engine.function_task)::
+
+        @tool
+        async def evaluate(self, x: float, seed: int = 0) -> dict:
+            return self.engine.function_task(_eval_impl)(x=x, seed=seed)
+
+    Block (orchestrates sub-tasks)::
+
+        @tool
+        async def pipeline(self, candidate: str) -> dict:
+            async def _block(c: str) -> dict:
+                prepped = await self.engine.function_task(_prep)(c)
+                return await self.engine.function_task(_score)(prepped)
+            return self.engine.block(_block)(candidate)
+
+    Methods that accept ``*dep_futures`` receive resolved AsyncFlow futures
+    from ``depends_on`` UIDs specified in the Action and can forward them
+    directly to engine calls for native DAG chaining.
     """
     fn._adl_tool = True  # type: ignore[attr-defined]
     return fn
@@ -125,29 +143,27 @@ def goals(fn: Callable) -> Callable:
     return fn
 
 
-# ── Future watcher ────────────────────────────────────────────────────────────
+# ── Future event delivery ─────────────────────────────────────────────────────
 
-async def _watch_future(uid: str, future: asyncio.Future, inbox: asyncio.Queue) -> None:
-    """Background task: await a single AsyncFlow future and deliver its outcome."""
-    try:
-        result = await future
-        await inbox.put(InboxMessage(
-            kind      = MessageKind.TASK_EVENT,
-            sender_id = "asyncflow",
-            payload   = {"uid": uid, "state": "DONE", "result": result},
-        ))
-    except asyncio.CancelledError:
-        await inbox.put(InboxMessage(
-            kind      = MessageKind.TASK_EVENT,
-            sender_id = "asyncflow",
-            payload   = {"uid": uid, "state": "CANCELED"},
-        ))
-    except Exception as exc:
-        await inbox.put(InboxMessage(
-            kind      = MessageKind.TASK_EVENT,
-            sender_id = "asyncflow",
-            payload   = {"uid": uid, "state": "FAILED", "error": exc},
-        ))
+def _deliver_task_event(
+    future: asyncio.Future, uid: str, inbox: asyncio.Queue
+) -> None:
+    """Synchronous done-callback: deliver a TASK_EVENT when a future settles.
+
+    Registered via future.add_done_callback — zero coroutines, O(1) per task
+    at registration, fires immediately on settlement.
+    """
+    if future.cancelled():
+        payload: dict = {"uid": uid, "state": "CANCELED"}
+    elif (exc := future.exception()) is not None:
+        payload = {"uid": uid, "state": "FAILED", "error": exc}
+    else:
+        payload = {"uid": uid, "state": "DONE", "result": future.result()}
+    inbox.put_nowait(InboxMessage(
+        kind      = MessageKind.TASK_EVENT,
+        sender_id = "asyncflow",
+        payload   = payload,
+    ))
 
 
 # ── Operator ─────────────────────────────────────────────────────────────────
@@ -158,21 +174,29 @@ class Operator:
     Subclass to define tools, goals, and the adaptive cycle::
 
         class MyOp(Operator):
-            goals = [ScientificGoal(...)]
-            best:  float = float("inf")      # persists across cycles via state.objectives
+            best: float = float("inf")   # persists across cycles via state.objectives
+
+            @goals
+            def convergence_criteria(self):
+                return ScientificGoal(name="converged", metric="best", threshold=0.01)
 
             @tool
-            async def compute(self, x: float) -> dict: ...
+            async def compute(self, x: float) -> dict:
+                # local execution — or return self.engine.function_task(fn)(x=x)
+                return {"value": x ** 2}
 
-            @decide(policy=RulePolicy([...]))
-            async def adaptive_cycle(self, obs: dict) -> Decision:
-                return Decision(stop=True)   # fallback
+            @observe
+            def extract(self, snapshot) -> dict:
+                results = [v for k, v in snapshot.observations.items()
+                           if k.startswith("result.") and "value" in v]
+                return {"best": min((r["value"] for r in results), default=float("inf"))}
 
         op = MyOp(engine)
+        op.policy = MyPolicy(op)
         async for snapshot in op.run(): ...
 
-    The operator ONLY: observes (``_watch_future``, telemetry),
-    reasons (``policy.decide``), and acts (``factory()``, ``future.cancel()``).
+    The operator ONLY: observes (done-callbacks, telemetry),
+    reasons (``policy.decide``), and acts (``@tool`` calls, ``future.cancel()``).
     It never owns scheduling, execution lifecycle, or distributed coordination.
     """
 
@@ -215,25 +239,23 @@ class Operator:
     def __init__(
         self,
         engine:        Any,
-        operator_id:   str | None               = None,
+        operator_id:   str | None            = None,
         *,
-        policy:        "Policy | None"      = None,
-        parent:        "Operator | None"        = None,
-        inbox_maxsize: int                       = 0,
-        observer:      "ObserverBase | None"    = None,
+        policy:        "Policy | None"       = None,
+        parent:        "Operator | None"     = None,
+        inbox_maxsize: int                   = 0,
+        observer:      "ObserverBase | None" = None,
     ) -> None:
         object.__setattr__(self, "operator_id",  operator_id or type(self).__name__)
         object.__setattr__(self, "engine",       engine)
         object.__setattr__(self, "parent",       parent)
         object.__setattr__(self, "observer",     observer)
 
-        object.__setattr__(self, "state",         RuntimeState(self.operator_id))
-        object.__setattr__(self, "inbox",         asyncio.Queue(maxsize=inbox_maxsize))
-        object.__setattr__(self, "children",      {})
-        object.__setattr__(self, "task_registry", {})
-        object.__setattr__(self, "workflow_registry", {})
-        object.__setattr__(self, "_stop_event",   asyncio.Event())
-        object.__setattr__(self, "_watcher_tasks", [])
+        object.__setattr__(self, "state",        RuntimeState(self.operator_id))
+        object.__setattr__(self, "inbox",        asyncio.Queue(maxsize=inbox_maxsize))
+        object.__setattr__(self, "children",     {})
+        object.__setattr__(self, "_stop_event",    asyncio.Event())
+        object.__setattr__(self, "_block_factory", None)
 
         object.__setattr__(self, "_policy",        policy)
         object.__setattr__(self, "_runtime_goals", [])
@@ -245,10 +267,6 @@ class Operator:
                 if raw is not _MISSING and not callable(raw):
                     self.state.objectives[key] = raw
                     break
-
-        # Auto-register @tool methods with the AsyncFlow engine
-        for name, fn in type(self)._adl_tools_registry.items():
-            self._register_tool_as_task(name, fn)
 
         # Build ToolSet
         object.__setattr__(self, "_adl_toolset", ToolSet(self))
@@ -279,39 +297,11 @@ class Operator:
                 pass
         object.__setattr__(self, name, value)
 
-    # ── Tool registration ─────────────────────────────────────────────────────
-
-    def _register_tool_as_task(self, name: str, fn: Callable) -> None:
-        """Wrap a @tool method (drop self) and register with engine.function_task."""
-        sig = inspect.signature(fn)
-        new_params = [p for pname, p in sig.parameters.items() if pname != "self"]
-
-        @functools.wraps(fn)
-        async def _task_fn(**kwargs: Any) -> Any:
-            return await fn(None, **kwargs)
-
-        _task_fn.__signature__ = sig.replace(parameters=new_params)  # type: ignore[attr-defined]
-
-        registered = self.engine.function_task(_task_fn)
-        self.task_registry[name] = registered
-
-    def register_task_fn(self, name: str, fn: Callable) -> None:
-        """Explicitly register an AsyncFlow task factory by name.
-
-        Use this when the task is defined outside the class body (e.g., for
-        ProcessPoolExecutor compatibility where the function must be at module level).
-        """
-        self.task_registry[name] = fn
-
-    def register_workflow_fn(self, name: str, fn: Callable) -> None:
-        """Register an AsyncFlow workflow block factory by name."""
-        self.workflow_registry[name] = fn
-
     # ── Policy ───────────────────────────────────────────────────────────────
 
     @property
     def policy(self) -> "Policy | None":
-        """Active decision policy.  Overrides the ``@loop``-level default."""
+        """Active decision policy."""
         return object.__getattribute__(self, "_policy")
 
     @policy.setter
@@ -371,9 +361,9 @@ class Operator:
         for new_goal in decision.goals:
             idx = next((i for i, g in enumerate(runtime) if g.name == new_goal.name), None)
             if idx is not None:
-                runtime[idx] = new_goal   # update threshold / config in place
+                runtime[idx] = new_goal
             else:
-                runtime.append(new_goal)  # new goal
+                runtime.append(new_goal)
 
     @property
     def runtime_goals(self) -> list:
@@ -425,8 +415,8 @@ class Operator:
         Each cycle:
           1. RUN     — drain inbox → RuntimeState
           2. OBSERVE — self.observe(snapshot) → obs dict
-          3. DECIDE  — policy.decide(obs) OR fallback method → Decision
-          4. ACT     — apply(Decision.actions) → AsyncFlow calls
+          3. DECIDE  — policy.decide(obs) → Decision
+          4. ACT     — apply(Decision.actions) → @tool calls / future tracking
                        check goals → may force stop
         """
         if self.observer is not None:
@@ -483,11 +473,6 @@ class Operator:
             for future in self.state.task_futures.values():
                 if not future.done():
                     future.cancel()
-            for task in self._watcher_tasks:
-                task.cancel()
-            if self._watcher_tasks:
-                await asyncio.gather(*self._watcher_tasks, return_exceptions=True)
-            self._watcher_tasks.clear()
 
             final_snap = self.state.snapshot() if self.state.cycle > 0 else None
             if self.observer is not None:
@@ -501,17 +486,37 @@ class Operator:
             last = snapshot
         return last
 
+    def start(self, *dep_futures: asyncio.Future) -> asyncio.Future:
+        """Register and start this operator as an AsyncFlow block.
+
+        Returns a block Future that resolves to the final Snapshot when the
+        operator's run loop finishes.  Passing upstream Futures as
+        ``dep_futures`` chains this operator's start to their completion —
+        the same native dependency model as ``engine.block`` and
+        ``engine.function_task``.
+
+        Example — sequential DAG expressed in a parent @tool::
+
+            @tool
+            async def launch_b(self, dep_future) -> asyncio.Future:
+                return self.child_b.start(dep_future)   # B starts when dep is DONE
+        """
+        factory = object.__getattribute__(self, "_block_factory")
+        if factory is None:
+            async def _run_block(*_dep_results: Any) -> "Snapshot | None":
+                return await self.run_to_completion()
+            _run_block.__name__     = f"operator.{self.operator_id}"
+            _run_block.__qualname__ = f"operator.{self.operator_id}"
+            factory = self.engine.block(_run_block)
+            object.__setattr__(self, "_block_factory", factory)
+        return factory(*dep_futures)
+
     async def shutdown(self) -> None:
-        """Signal stop and cancel outstanding watcher tasks."""
+        """Signal stop and cancel outstanding task futures."""
         self._stop_event.set()
         await self.inbox.put(InboxMessage(
             kind=MessageKind.STOP, sender_id="system", payload=None
         ))
-        for task in self._watcher_tasks:
-            task.cancel()
-        if self._watcher_tasks:
-            await asyncio.gather(*self._watcher_tasks, return_exceptions=True)
-        self._watcher_tasks.clear()
 
     # ── Inbox drain ──────────────────────────────────────────────────────────
 
@@ -532,6 +537,14 @@ class Operator:
                     break
             self._apply_message(msg)
             drained += 1
+        self._sync_running_states()
+
+    def _sync_running_states(self) -> None:
+        """Promote futures whose AsyncFlow state is RUNNING but not yet reflected."""
+        for uid, fut in self.state.task_futures.items():
+            if (getattr(fut, "state", None) == "RUNNING"
+                    and self.state.runtime.get(uid) == "PENDING"):
+                self.state.runtime[uid] = "RUNNING"
 
     def _apply_message(self, msg: InboxMessage) -> None:
         if msg.kind == MessageKind.STOP:
@@ -567,6 +580,8 @@ class Operator:
                 self.state.observations[f"child:{child_id}:{k}"] = v
             for k, v in snapshot.runtime.items():
                 self.state.observations[f"child:{child_id}:runtime:{k}"] = v
+            for k, v in snapshot.objectives.items():
+                self.state.observations[f"child:{child_id}:obj:{k}"] = v
 
     # ── Action application ───────────────────────────────────────────────────
 
@@ -580,27 +595,36 @@ class Operator:
                 ) from exc
 
     async def _apply_one(self, act: Action) -> None:
-        if act.kind == ActionKind.SPAWN_TASK:
-            if act.task_name is None or act.task_name not in self.task_registry:
+        if act.kind in (ActionKind.SPAWN_TASK, ActionKind.SPAWN_BLOCK):
+            if act.task_name is None:
+                raise ActionError(f"{act.kind}: task_name is required")
+            fn = type(self)._adl_tools_registry.get(act.task_name)
+            if fn is None:
                 raise ActionError(
-                    f"SPAWN_TASK: unknown task_name '{act.task_name}'. "
-                    f"Registered: {list(self.task_registry)}"
+                    f"Unknown tool '{act.task_name}'. "
+                    f"Registered: {list(type(self)._adl_tools_registry)}"
                 )
-            factory    = self.task_registry[act.task_name]
             dep_futures = [
                 self.state.task_futures[uid]
                 for uid in act.depends_on
                 if uid in self.state.task_futures
             ]
-            future = factory(*dep_futures, **act.task_kwargs)
-            uid    = str(getattr(future, "id", id(future)))
-            self.state.task_futures[uid] = future
-            self.state.runtime[uid]      = "PENDING"
-            task = asyncio.create_task(
-                _watch_future(uid, future, self.inbox),
-                name=f"watcher.{self.operator_id}.{uid}",
-            )
-            self._watcher_tasks.append(task)
+            result = await fn(self, *dep_futures, **act.task_kwargs)
+            if isinstance(result, asyncio.Future):
+                uid = str(getattr(result, "id", id(result)))
+                self.state.task_futures[uid] = result
+                self.state.runtime[uid]      = "PENDING"
+                result.add_done_callback(
+                    lambda fut, _uid=uid: _deliver_task_event(fut, _uid, self.inbox)
+                )
+            elif result is not None:
+                # Local result — deliver to inbox so @observe sees it next cycle
+                uid = f"local.{act.task_name}.{id(result)}"
+                self.inbox.put_nowait(InboxMessage(
+                    kind      = MessageKind.TASK_EVENT,
+                    sender_id = "adl.local",
+                    payload   = {"uid": uid, "state": "DONE", "result": result},
+                ))
 
         elif act.kind == ActionKind.CANCEL_TASK:
             if act.target_uid is None:
@@ -609,28 +633,6 @@ class Operator:
             if future is None:
                 raise ActionError(f"CANCEL_TASK: unknown uid '{act.target_uid}'")
             future.cancel()
-
-        elif act.kind == ActionKind.SPAWN_BLOCK:
-            if act.task_name is None or act.task_name not in self.workflow_registry:
-                raise ActionError(
-                    f"SPAWN_BLOCK: unknown workflow '{act.task_name}'. "
-                    f"Registered: {list(self.workflow_registry)}"
-                )
-            factory    = self.workflow_registry[act.task_name]
-            dep_futures = [
-                self.state.task_futures[uid]
-                for uid in act.depends_on
-                if uid in self.state.task_futures
-            ]
-            future = factory(*dep_futures, **act.task_kwargs)
-            uid    = str(getattr(future, "id", id(future)))
-            self.state.task_futures[uid] = future
-            self.state.runtime[uid]      = "PENDING"
-            task = asyncio.create_task(
-                _watch_future(uid, future, self.inbox),
-                name=f"watcher.{self.operator_id}.{uid}",
-            )
-            self._watcher_tasks.append(task)
 
         elif act.kind == ActionKind.UPDATE_PARAM:
             if act.param_key is None:
@@ -665,5 +667,3 @@ class Operator:
                 sender_id = self.operator_id,
                 payload   = snapshot,
             ))
-
-

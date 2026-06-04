@@ -83,7 +83,7 @@ async def main():
     backend = await LocalExecutionBackend(ThreadPoolExecutor())
     engine  = await WorkflowEngine.create(backend)
 
-    op        = SearchOperator(engine)
+    op = SearchOperator(engine)
     op.policy = SearchPolicy(op)
 
     async for snapshot in op.run():
