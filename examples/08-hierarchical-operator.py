@@ -84,9 +84,9 @@ class SearchPolicy(Policy):
         if obs["best"] is not None:
             new_c, new_r = obs["best"]["x"], obs["radius"] * 0.6
             return Decision(actions=[
-                self._tools.update_state("history", obs["history"]),
-                self._tools.update_state("center",  new_c),
-                self._tools.update_state("radius",  new_r),
+                self._tools.update_param("history", obs["history"]),
+                self._tools.update_param("center",  new_c),
+                self._tools.update_param("radius",  new_r),
                 *[self._tools.evaluate(x=new_c + new_r * (2*i/3-1), seed=obs["cycle"]*4+i)
                   for i in range(4)],
             ])

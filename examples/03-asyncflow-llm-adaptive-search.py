@@ -29,7 +29,7 @@ from pydantic import BaseModel, Field
 
 from radical.asyncflow import LocalExecutionBackend, WorkflowEngine
 
-from radical.adl import Action, ActionKind, Decision, LLMPolicy, Operator, decide, goals, observe, tool
+from radical.adl import Decision, LLMPolicy, Operator, decide, goals, observe, tool
 from radical.adl.goals import ScientificGoal
 
 TARGET     = 3.14159
@@ -59,8 +59,9 @@ class SearchDecision(BaseModel):
 class OpenRouterPolicy(LLMPolicy):
     system_prompt = SYSTEM_PROMPT
 
-    def __init__(self, api_key: str) -> None:
+    def __init__(self, api_key: str, op: "LLMSearchOperator") -> None:
         super().__init__()
+        self._tools = op.get_tools()
         raw         = AsyncOpenAI(api_key=api_key, base_url="https://openrouter.ai/api/v1")
         self.client = instructor.from_openai(raw)
 
@@ -75,10 +76,9 @@ class OpenRouterPolicy(LLMPolicy):
         return Decision(
             stop=sd.stop,
             actions=[
-                Action(kind=ActionKind.UPDATE_PARAM, param_key="center", param_value=sd.new_center),
-                Action(kind=ActionKind.UPDATE_PARAM, param_key="radius", param_value=sd.new_radius),
-                *[Action(kind=ActionKind.SPAWN_TASK, task_name="evaluate",
-                         task_kwargs={"x": x, "seed": i})
+                self._tools.update_param("center", sd.new_center),
+                self._tools.update_param("radius", sd.new_radius),
+                *[self._tools.evaluate(x=x, seed=i)
                   for i, x in enumerate(sd.evaluations)],
             ],
         )
@@ -121,7 +121,7 @@ async def main():
     backend   = await LocalExecutionBackend(ThreadPoolExecutor())
     engine    = await WorkflowEngine.create(backend)
     op        = LLMSearchOperator(engine)
-    op.policy = OpenRouterPolicy(api_key)
+    op.policy = OpenRouterPolicy(api_key, op)
 
     async for snapshot in op.run():
         print(f"cycle {snapshot.cycle:2d}  center={op.center:+.5f}  radius={op.radius:.5f}")

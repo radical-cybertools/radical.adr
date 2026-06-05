@@ -25,7 +25,7 @@ class ToolSet:
         tools.spawn_task("evaluate", x=1.0)    → Action(SPAWN_TASK, ...)
         tools.spawn_workflow("refine_block")   → Action(SPAWN_BLOCK, ...)
         tools.cancel_task("uid-abc")           → Action(CANCEL_TASK, ...)
-        tools.update_state("center", 3.14)     → Action(UPDATE_PARAM, ...)
+        tools.update_param("center", 3.14)      → Action(UPDATE_PARAM, ...)
         tools.stop()                           → Decision(stop=True)
 
     Plus one shorthand per ``@tool`` method::
@@ -63,8 +63,8 @@ class ToolSet:
         """Cancel a running or pending task by its UID."""
         return Action(kind=ActionKind.CANCEL_TASK, target_uid=uid)
 
-    def update_state(self, key: str, value: Any) -> Action:
-        """Write a key-value pair into operator state (objectives)."""
+    def update_param(self, key: str, value: Any) -> Action:
+        """Write a key-value pair into operator objectives."""
         return Action(kind=ActionKind.UPDATE_PARAM, param_key=key, param_value=value)
 
     def stop(self) -> Decision:
@@ -138,7 +138,7 @@ _BUILTIN_SPECS = [
      [("name", str), ("kwargs", dict)]),
     ("cancel_task",    "Cancel a running or pending task by its UID.",
      [("uid", str)]),
-    ("update_state",   "Write a key-value pair into operator state.",
+    ("update_param",   "Write a key-value pair into operator objectives.",
      [("key", str), ("value", Any)]),
     ("stop",           "Signal the operator loop to terminate cleanly.", []),
 ]

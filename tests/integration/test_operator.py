@@ -100,7 +100,7 @@ async def test_async_tool_dispatch(engine):
     assert snap.cycle >= 1
 
 
-# ── 4c: update_state writes to objectives ────────────────────────────────────
+# ── 4c: update_param writes to objectives ────────────────────────────────────
 
 class _UpdateOp(Operator):
     center: float = 0.0
@@ -118,11 +118,11 @@ class _UpdatePolicy(Policy):
     @decide
     async def run(self, obs: dict) -> Decision:
         if obs["cycle"] == 0:
-            return Decision(actions=[self._t.update_state("center", 42.0)])
+            return Decision(actions=[self._t.update_param("center", 42.0)])
         return Decision(stop=True)
 
 
-async def test_update_state_writes_objectives(engine):
+async def test_update_param_writes_objectives(engine):
     op = _UpdateOp(engine)
     op.policy = _UpdatePolicy(op)
     await op.run_to_completion()
@@ -153,7 +153,7 @@ class _GoalPolicy(Policy):
         if obs["cycle"] >= 10:
             return Decision(stop=True)
         if obs["cycle"] == 0:
-            return Decision(actions=[self._t.update_state("radius", 0.001)])
+            return Decision(actions=[self._t.update_param("radius", 0.001)])
         return Decision()
 
 
@@ -206,7 +206,7 @@ class _ParentPolicy(Policy):
     async def run(self, obs: dict) -> Decision:
         if obs["child_radius"] is not None:
             return Decision(actions=[
-                self._t.update_state("last_child_radius", obs["child_radius"])
+                self._t.update_param("last_child_radius", obs["child_radius"])
             ], stop=True)
         if obs["cycle"] >= 8:  # safety stop
             return Decision(stop=True)

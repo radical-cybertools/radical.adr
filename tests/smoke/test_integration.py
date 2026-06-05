@@ -69,9 +69,9 @@ class SearchPolicy(Policy):
             new_c = obs["best"]["x"]
             new_r = obs["radius"] * 0.6
             return Decision(actions=[
-                self._t.update_state("history", obs["history"]),
-                self._t.update_state("center",  new_c),
-                self._t.update_state("radius",  new_r),
+                self._t.update_param("history", obs["history"]),
+                self._t.update_param("center",  new_c),
+                self._t.update_param("radius",  new_r),
                 *[self._t.evaluate(x=new_c + new_r * (2*i/3 - 1), seed=obs["cycle"]*4+i)
                   for i in range(4)],
             ])
