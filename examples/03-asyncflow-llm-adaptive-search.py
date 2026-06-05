@@ -36,6 +36,12 @@ TARGET     = 3.14159
 MIN_RADIUS = 0.005
 MODEL      = os.environ.get("OPENROUTER_MODEL", "openai/gpt-4o-mini")
 
+
+async def evaluate_task(x: float, seed: int = 0) -> dict:
+    import random
+    rng = random.Random(seed)
+    return {"x": x, "value": (x - TARGET) ** 2 + rng.gauss(0, 0.03)}
+
 SYSTEM_PROMPT = f"""\
 Minimize f(x) = (x - {TARGET})² + noise on the real line.
 Each cycle: pick best x seen so far, halve the search radius, spawn 4 evaluations.
@@ -90,9 +96,8 @@ class LLMSearchOperator(Operator):
                               threshold=MIN_RADIUS, direction="minimize")
 
     @tool
-    async def evaluate(self, x: float, seed: int = 0) -> dict:
-        rng = random.Random(seed)
-        return {"x": x, "value": (x - TARGET) ** 2 + rng.gauss(0, 0.03)}
+    async def evaluate(self, x: float, seed: int = 0):
+        return self.engine.function_task(evaluate_task)(x=x, seed=seed)
 
     @observe
     def extract(self, snapshot) -> dict:

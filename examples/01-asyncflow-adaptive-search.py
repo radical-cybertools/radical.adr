@@ -23,6 +23,10 @@ from radical.adl.goals import ScientificGoal
 TARGET     = 3.14159
 MIN_RADIUS = 0.005
 
+async def evaluate_task(x: float, seed: int = 0) -> dict:
+    rng = random.Random(seed)
+    return {"x": x, "value": (x - TARGET) ** 2 + rng.gauss(0, 0.03)}
+
 
 class SearchOperator(Operator):
 
@@ -37,8 +41,7 @@ class SearchOperator(Operator):
 
     @tool
     async def evaluate(self, x: float, seed: int = 0) -> dict:
-        rng = random.Random(seed)
-        return {"x": x, "value": (x - TARGET) ** 2 + rng.gauss(0, 0.03)}
+        return self.engine.function_task(evaluate_task)(x=x, seed=seed)
 
     @observe
     def extract(self, snapshot) -> dict:

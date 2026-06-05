@@ -32,6 +32,15 @@ def _mock_score(candidate: str, seed: int = 0) -> float:
     return -random.Random(hash(candidate) ^ seed).uniform(4.0, 10.0)
 
 
+async def dock_task(candidate: str, seed: int = 0) -> dict:
+    return {"candidate": candidate, "score": _mock_score(candidate, seed)}
+
+
+async def md_refine_task(candidate: str) -> dict:
+    return {"candidate": candidate,
+            "score_refined": _mock_score(candidate) - random.uniform(0.1, 0.5)}
+
+
 class MockLLMPolicy(LLMPolicy):
     """Placeholder — replace @decide body with a real LLM call."""
     system_prompt = "You are a protein design expert."
@@ -53,13 +62,12 @@ class ProteinDesignOperator(Operator):
                               threshold=-8.0, direction="minimize")
 
     @tool
-    async def dock(self, candidate: str, seed: int = 0) -> dict:
-        return {"candidate": candidate, "score": _mock_score(candidate, seed)}
+    async def dock(self, candidate: str, seed: int = 0):
+        return self.engine.function_task(dock_task)(candidate=candidate, seed=seed)
 
     @tool
-    async def md_refine(self, candidate: str) -> dict:
-        return {"candidate": candidate,
-                "score_refined": _mock_score(candidate) - random.uniform(0.1, 0.5)}
+    async def md_refine(self, candidate: str):
+        return self.engine.function_task(md_refine_task)(candidate=candidate)
 
     @observe
     def extract(self, snapshot) -> dict:
