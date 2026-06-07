@@ -14,7 +14,7 @@ log = logging.getLogger(__name__)
 def decide(fn: Callable) -> Callable:
     """Mark a method as the policy's decision entry point.
 
-    Mirrors ``@tool``, ``@observe``, ``@goals`` on the Operator side.
+    Mirrors ``@act``, ``@observe``, ``@goals`` on the Operator side.
     The decorated method receives ``obs: dict`` and returns a ``Decision``.
     The method may be named anything.
 
@@ -39,7 +39,7 @@ class Policy:
 
         class SearchPolicy(Policy):
             def __init__(self, op):
-                self._tools = op.get_tools()
+                self._act = op.get_actions()
 
             @decide
             async def run(self, obs: dict) -> Decision:

@@ -17,7 +17,7 @@ Sacred boundary:
 
 Quick-start::
 
-    from radical.adl import Operator, tool, loop, Decision, Action, ActionKind
+    from radical.adl import Operator, act, loop, Decision, Action, ActionKind
     from radical.adl.goals import ScientificGoal
     from radical.adl.policy import RulePolicy
 
@@ -28,7 +28,7 @@ Quick-start::
         radius: float = 10.0
         history: list = []
 
-        @tool
+        @act
         async def evaluate(self, x: float, seed: int = 0) -> dict:
             import random
             rng = random.Random(seed)
@@ -74,19 +74,19 @@ from radical.adl.observer import TelemetryObserver
 from radical.adl.operator import Operator
 from radical.adl.operator import goals
 from radical.adl.operator import observe
-from radical.adl.operator import tool
+from radical.adl.operator import act
 from radical.adl.policy.base import Policy
 from radical.adl.policy.base import decide
 from radical.adl.policy.combinators import ChainPolicy
 from radical.adl.policy.llm import LLMPolicy
 from radical.adl.state import RuntimeState
 from radical.adl.state import Snapshot
-from radical.adl.tools import ToolSet
+from radical.adl.tools import ActionSet
 
 __all__ = [
     # Operator + decorators
     "Operator",
-    "tool",
+    "act",
     "observe",
     "goals",
     # State
@@ -110,7 +110,7 @@ __all__ = [
     "LLMPolicy",
     "ChainPolicy",
     # Tools
-    "ToolSet",
+    "ActionSet",
     # Observers
     "ObserverBase",
     "TelemetryObserver",

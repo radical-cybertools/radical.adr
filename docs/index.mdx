@@ -20,7 +20,9 @@ It sits above [AsyncFlow](https://github.com/radical-cybertools/radical.asyncflo
          ↕  ← ADL fills this gap
 [Operator: Observe → Decide → Act  |  Goals: scientific + computational]
          ↕  ← standardized
-[AsyncFlow — async workflow execution on HPC backends]
+[Computational Workflows — AsyncFlow: highly async graph layer for HPC]
+         ↕  ← standardized
+[AI-HPC runtime system — RHAPSODY: scalable AI and execution runtime system for HPC]
 ```
 
 ---
@@ -45,7 +47,7 @@ cd radical.adl && pip install -e .
 | Concept | Role |
 |---------|------|
 | `Operator` | The autonomous agent. Owns state, drives the cycle, stops when goals are met. |
-| `@tool` | An action the operator can take. Return a plain value → runs locally. Return a `Future` → dispatched to AsyncFlow. |
+| `@act` | An action the operator can take. Return a plain value → runs locally. Return a `Future` → dispatched to AsyncFlow. |
 | `@observe` | Extracts domain metrics from task results each cycle. Receives the current `Snapshot`, returns a plain `dict`. |
 | `@goals` | Convergence criteria. The operator stops automatically when **all** goals are satisfied. |
 | `Policy / @decide` | Decision logic. Receives the observation dict, returns a `Decision`. Swap it without touching the operator. |
@@ -103,11 +105,11 @@ class SearchOperator(Operator):
         )
 
     # ── Tool: the dispatch point ──────────────────────────────────────────────
-    # @tool runs in the operator's event loop with self available.
+    # @act runs in the operator's event loop with self available.
     # Returning self.engine.function_task(fn)(...) dispatches to AsyncFlow
     # and returns a Future — the result arrives in the inbox when done.
 
-    @tool
+    @act
     async def evaluate(self, x: float, seed: int = 0):
         return self.engine.function_task(_evaluate_impl)(x=x, seed=seed)
 
@@ -134,7 +136,7 @@ class SearchOperator(Operator):
 ```
 
 <Note>
-**Module-level impls must not take `self`.** They are pure functions dispatched by AsyncFlow to a backend executor. Only the data you pass as kwargs reaches the function. `self.engine` and operator state are not available inside them — use the `@tool` method body for anything that needs `self`.
+**Module-level impls must not take `self`.** They are pure functions dispatched by AsyncFlow to a backend executor. Only the data you pass as kwargs reaches the function. `self.engine` and operator state are not available inside them — use the `@act` method body for anything that needs `self`.
 </Note>
 
 ### 2. Write the policy
@@ -144,7 +146,7 @@ class SearchPolicy(Policy):
 
     def __init__(self, op: SearchOperator) -> None:
         super().__init__()
-        self._tools = op.get_tools()   # ToolSet: one callable per @tool
+        self._act = op.get_actions()   # ActionSet: one callable per @act
 
     @decide
     async def run(self, obs: dict) -> Decision:
@@ -156,17 +158,17 @@ class SearchPolicy(Policy):
             # Shrink the window around the best point found so far
             new_c, new_r = obs["best"]["x"], obs["radius"] * 0.5
             return Decision(actions=[
-                self._tools.update_param("history", obs["history"]),
-                self._tools.update_param("center",  new_c),
-                self._tools.update_param("radius",  new_r),
+                self._act.update_param("history", obs["history"]),
+                self._act.update_param("center",  new_c),
+                self._act.update_param("radius",  new_r),
                 # Spawn 4 evaluations spread around the new center
-                *[self._tools.evaluate(x=new_c + new_r*(2*i/3-1), seed=obs["cycle"]*4+i)
+                *[self._act.evaluate(x=new_c + new_r*(2*i/3-1), seed=obs["cycle"]*4+i)
                   for i in range(4)],
             ])
 
         # First cycle: seed the search
         return Decision(actions=[
-            self._tools.evaluate(x=obs["center"] + obs["radius"]*(2*i/3-1),
+            self._act.evaluate(x=obs["center"] + obs["radius"]*(2*i/3-1),
                                  seed=obs["cycle"]*4+i)
             for i in range(4)
         ])

@@ -2,7 +2,7 @@
 
 Usage (subclass-based)::
 
-    from radical.adl import Operator, tool, Decision
+    from radical.adl import Operator, act, Decision
     from radical.adl.goals import ScientificGoal
 
     class SearchOperator(Operator):
@@ -15,7 +15,7 @@ Usage (subclass-based)::
             return ScientificGoal(name="converged", metric="radius",
                                   threshold=0.005, direction="minimize")
 
-        @tool
+        @act
         async def evaluate(self, x: float, seed: int = 0) -> dict:
             # Local execution — returns plain dict
             import random
@@ -42,7 +42,7 @@ from radical.adl.decision import Action, ActionKind, Decision
 from radical.adl.errors import ActionError, PolicyError
 from radical.adl.message import InboxMessage, MessageKind
 from radical.adl.state import RuntimeState, Snapshot
-from radical.adl.tools import ToolSet
+from radical.adl.tools import ActionSet
 
 from radical.adl.goals import Goal
 
@@ -60,14 +60,14 @@ _MISSING       = object()  # sentinel for "no default value"
 _RESERVED = frozenset({
     "operator_id", "engine", "parent", "observer",
     "state", "inbox", "children",
-    "_stop_event", "_adl_toolset", "_policy", "_runtime_goals", "_block_factory",
+    "_stop_event", "_adl_actionset", "_policy", "_runtime_goals", "_block_factory",
 })
 
 
 # ── Module-level decorators ───────────────────────────────────────────────────
 
-def tool(fn: Callable) -> Callable:
-    """Mark a method as an ADL tool — callable by the policy via the ToolSet.
+def act(fn: Callable) -> Callable:
+    """Mark a method as an ADL act — the operator's execution primitive.
 
     The method runs in the operator's event loop with ``self`` available.
     Return a plain value for local execution, or return an ``asyncio.Future``
@@ -75,7 +75,7 @@ def tool(fn: Callable) -> Callable:
 
     Local (runs inline)::
 
-        @tool
+        @act
         async def evaluate(self, x: float, seed: int = 0) -> dict:
             import random
             rng = random.Random(seed)
@@ -83,13 +83,13 @@ def tool(fn: Callable) -> Callable:
 
     Backend task (dispatches to engine.function_task)::
 
-        @tool
+        @act
         async def evaluate(self, x: float, seed: int = 0) -> dict:
             return self.engine.function_task(_eval_impl)(x=x, seed=seed)
 
     Block (orchestrates sub-tasks)::
 
-        @tool
+        @act
         async def pipeline(self, candidate: str) -> dict:
             async def _block(c: str) -> dict:
                 prepped = await self.engine.function_task(_prep)(c)
@@ -100,7 +100,7 @@ def tool(fn: Callable) -> Callable:
     from ``depends_on`` UIDs specified in the Action and can forward them
     directly to engine calls for native DAG chaining.
     """
-    fn._adl_tool = True  # type: ignore[attr-defined]
+    fn._adl_act = True  # type: ignore[attr-defined]
     return fn
 
 
@@ -180,7 +180,7 @@ class Operator:
             def convergence_criteria(self):
                 return ScientificGoal(name="converged", metric="best", threshold=0.01)
 
-            @tool
+            @act
             async def compute(self, x: float) -> dict:
                 # local execution — or return self.engine.function_task(fn)(x=x)
                 return {"value": x ** 2}
@@ -196,13 +196,13 @@ class Operator:
         async for snapshot in op.run(): ...
 
     The operator ONLY: observes (done-callbacks, telemetry),
-    reasons (``policy.decide``), and acts (``@tool`` calls, ``future.cancel()``).
+    reasons (``policy.decide``), and acts (``@act`` calls, ``future.cancel()``).
     It never owns scheduling, execution lifecycle, or distributed coordination.
     """
 
     # ── Class-level registries (populated by __init_subclass__) ──────────────
 
-    _adl_tools_registry: dict[str, Callable] = {}
+    _adl_act_registry: dict[str, Callable] = {}
     _adl_observe_fn:     Callable | None      = None
     _adl_goals_fn:       Callable | None      = None
     _adl_state_keys:     set[str]             = set()
@@ -211,13 +211,13 @@ class Operator:
         super().__init_subclass__(**kwargs)
 
         # Fresh registries per subclass (no shared mutable dicts)
-        cls._adl_tools_registry = {}
+        cls._adl_act_registry = {}
         cls._adl_observe_fn     = None
         cls._adl_goals_fn       = None
 
         for name, val in vars(cls).items():
-            if callable(val) and getattr(val, "_adl_tool", False):
-                cls._adl_tools_registry[name] = val
+            if callable(val) and getattr(val, "_adl_act", False):
+                cls._adl_act_registry[name] = val
             if callable(val) and getattr(val, "_adl_observe", False):
                 cls._adl_observe_fn = val
             if callable(val) and getattr(val, "_adl_goals", False):
@@ -268,8 +268,8 @@ class Operator:
                     self.state.objectives[key] = raw
                     break
 
-        # Build ToolSet
-        object.__setattr__(self, "_adl_toolset", ToolSet(self))
+        # Build ActionSet
+        object.__setattr__(self, "_adl_actionset", ActionSet(self))
 
     # ── State proxy ───────────────────────────────────────────────────────────
 
@@ -308,20 +308,25 @@ class Operator:
     def policy(self, value: "Policy | None") -> None:
         object.__setattr__(self, "_policy", value)
 
-    # ── Tools ─────────────────────────────────────────────────────────────────
+    # ── Actions ───────────────────────────────────────────────────────────────
 
-    def get_tools(self, format: str | None = None) -> "ToolSet | list":
-        """Return the operator's ToolSet, optionally rendered as LLM schemas.
+    def get_actions(self) -> "ActionSet":
+        """Return the operator's ActionSet for use in policy code.
 
-        ``get_tools()``              → ToolSet (Python callables, usable by any policy)
-        ``get_tools("openai")``      → list[dict] OpenAI tool spec
-        ``get_tools("anthropic")``   → list[dict] Anthropic tool spec
-        ``get_tools("langgraph")``   → list[BaseTool] LangGraph tools
+        ``get_actions()`` → ActionSet (Python callables, one per ``@act`` method
+        plus built-ins: spawn_task, cancel_task, update_param, stop)
         """
-        toolset: ToolSet = object.__getattribute__(self, "_adl_toolset")
-        if format is None:
-            return toolset
-        return toolset.get_schema(format)
+        return object.__getattribute__(self, "_adl_actionset")
+
+    def get_schema(self, format: str = "openai") -> list:
+        """Render all ``@act`` methods as LLM-callable schemas.
+
+        ``get_schema("openai")``      → list[dict] OpenAI tool spec
+        ``get_schema("anthropic")``   → list[dict] Anthropic tool spec
+        ``get_schema("langgraph")``   → list[BaseTool] LangGraph tools
+        """
+        actionset: ActionSet = object.__getattribute__(self, "_adl_actionset")
+        return actionset.get_schema(format)
 
     # ── Decide ────────────────────────────────────────────────────────────────
 
@@ -416,7 +421,7 @@ class Operator:
           1. RUN     — drain inbox → RuntimeState
           2. OBSERVE — self.observe(snapshot) → obs dict
           3. DECIDE  — policy.decide(obs) → Decision
-          4. ACT     — apply(Decision.actions) → @tool calls / future tracking
+          4. ACT     — apply(Decision.actions) → @act calls / future tracking
                        check goals → may force stop
         """
         if self.observer is not None:
@@ -495,9 +500,9 @@ class Operator:
         the same native dependency model as ``engine.block`` and
         ``engine.function_task``.
 
-        Example — sequential DAG expressed in a parent @tool::
+        Example — sequential DAG expressed in a parent @act::
 
-            @tool
+            @act
             async def launch_b(self, dep_future) -> asyncio.Future:
                 return self.child_b.start(dep_future)   # B starts when dep is DONE
         """
@@ -598,11 +603,11 @@ class Operator:
         if act.kind in (ActionKind.SPAWN_TASK, ActionKind.SPAWN_BLOCK):
             if act.task_name is None:
                 raise ActionError(f"{act.kind}: task_name is required")
-            fn = type(self)._adl_tools_registry.get(act.task_name)
+            fn = type(self)._adl_act_registry.get(act.task_name)
             if fn is None:
                 raise ActionError(
-                    f"Unknown tool '{act.task_name}'. "
-                    f"Registered: {list(type(self)._adl_tools_registry)}"
+                    f"Unknown act '{act.task_name}'. "
+                    f"Registered: {list(type(self)._adl_act_registry)}"
                 )
             dep_futures = [
                 self.state.task_futures[uid]

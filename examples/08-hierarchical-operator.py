@@ -24,11 +24,11 @@ from __future__ import annotations
 import asyncio
 import random
 import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ProcessPoolExecutor
 
 from radical.asyncflow import LocalExecutionBackend, WorkflowEngine
 
-from radical.adl import Decision, Operator, Policy, decide, goals, observe, tool
+from radical.adl import Decision, Operator, Policy, decide, goals, observe, act
 from radical.adl.goals import ScientificGoal
 
 TARGET     = 3.14159
@@ -55,7 +55,7 @@ class SearchOperator(Operator):
         return ScientificGoal(name="converged", metric="radius",
                               threshold=MIN_RADIUS, direction="minimize")
 
-    @tool
+    @act
     async def evaluate(self, x: float, seed: int = 0):
         return self.engine.function_task(evaluate_task)(x=x, seed=seed)
 
@@ -75,7 +75,7 @@ class SearchPolicy(Policy):
 
     def __init__(self, op: SearchOperator) -> None:
         super().__init__()
-        self._tools = op.get_tools()
+        self._act = op.get_actions()
 
     @decide
     async def run(self, obs: dict) -> Decision:
@@ -84,14 +84,14 @@ class SearchPolicy(Policy):
         if obs["best"] is not None:
             new_c, new_r = obs["best"]["x"], obs["radius"] * 0.6
             return Decision(actions=[
-                self._tools.update_param("history", obs["history"]),
-                self._tools.update_param("center",  new_c),
-                self._tools.update_param("radius",  new_r),
-                *[self._tools.evaluate(x=new_c + new_r * (2*i/3-1), seed=obs["cycle"]*4+i)
+                self._act.update_param("history", obs["history"]),
+                self._act.update_param("center",  new_c),
+                self._act.update_param("radius",  new_r),
+                *[self._act.evaluate(x=new_c + new_r * (2*i/3-1), seed=obs["cycle"]*4+i)
                   for i in range(4)],
             ])
         return Decision(actions=[
-            self._tools.evaluate(x=obs["center"] + obs["radius"]*(2*i/3-1),
+            self._act.evaluate(x=obs["center"] + obs["radius"]*(2*i/3-1),
                                   seed=obs["cycle"]*4+i)
             for i in range(4)
         ])
@@ -112,7 +112,7 @@ class ParentOperator(Operator):
         # Child-b starts far from TARGET (slower convergence)
         self.child_b.center = -8.0
 
-    @tool
+    @act
     async def launch_child_a(self) -> asyncio.Future:
         """Start child-a as an AsyncFlow block; returns its block Future."""
         fut = self.child_a.start()
@@ -120,7 +120,7 @@ class ParentOperator(Operator):
         self.state.artifacts["child_start_uid.child-a"] = uid
         return fut
 
-    @tool
+    @act
     async def launch_child_b(self, dep_future) -> asyncio.Future:
         """Start child-b after child-a completes (native AsyncFlow dependency)."""
         fut = self.child_b.start(dep_future)
@@ -152,14 +152,14 @@ class ParentPolicy(Policy):
 
     def __init__(self, op: ParentOperator) -> None:
         super().__init__()
-        self._tools = op.get_tools()
+        self._act = op.get_actions()
 
     @decide
     async def run(self, obs: dict) -> Decision:
         # Cycle 0: launch child-a
         if obs["cycle"] == 0:
             print(f"  [parent c{obs['cycle']:2d}] launching child-a")
-            return Decision(actions=[self._tools.launch_child_a()])
+            return Decision(actions=[self._act.launch_child_a()])
 
         a_uid    = obs["child_a_uid"]
         a_status = obs["child_a_status"]
@@ -171,7 +171,7 @@ class ParentPolicy(Policy):
             print(f"  [parent c{obs['cycle']:2d}] child-a done "
                   f"(radius={obs['child_a_radius']:.5f}) → launching child-b")
             return Decision(actions=[
-                self._tools.launch_child_b(depends_on=[a_uid])
+                self._act.launch_child_b(depends_on=[a_uid])
             ])
 
         # When child-b is DONE: stop
@@ -191,7 +191,7 @@ class ParentPolicy(Policy):
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 async def main():
-    backend = await LocalExecutionBackend(ThreadPoolExecutor(max_workers=8))
+    backend = await LocalExecutionBackend(ProcessPoolExecutor(max_workers=8))
     engine  = await WorkflowEngine.create(backend)
 
     parent        = ParentOperator(engine, "parent")

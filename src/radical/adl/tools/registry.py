@@ -1,2 +1,2 @@
-"""Deprecated — use radical.adl.tools.ToolSet instead."""
+"""Deprecated — use radical.adl.tools.ActionSet instead."""
 # kept for import compat; remove after migration

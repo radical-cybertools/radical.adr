@@ -12,7 +12,7 @@ import random
 
 import pytest
 
-from radical.adl import Decision, Operator, Policy, decide, goals, observe, tool
+from radical.adl import Decision, Operator, Policy, decide, goals, observe, act
 from radical.adl.goals import ScientificGoal
 
 TARGET     = 3.14159
@@ -32,7 +32,7 @@ class SearchOperator(Operator):
             threshold=MIN_RADIUS, direction="minimize"
         )
 
-    @tool
+    @act
     async def evaluate(self, x: float, seed: int = 0) -> dict:
         rng = random.Random(seed)
         return {"x": x, "value": (x - TARGET) ** 2 + rng.gauss(0, 0.01)}
@@ -58,7 +58,7 @@ class SearchOperator(Operator):
 class SearchPolicy(Policy):
     def __init__(self, op: SearchOperator) -> None:
         super().__init__()
-        self._t = op.get_tools()
+        self._act = op.get_actions()
 
     @decide
     async def run(self, obs: dict) -> Decision:
@@ -69,15 +69,15 @@ class SearchPolicy(Policy):
             new_c = obs["best"]["x"]
             new_r = obs["radius"] * 0.6
             return Decision(actions=[
-                self._t.update_param("history", obs["history"]),
-                self._t.update_param("center",  new_c),
-                self._t.update_param("radius",  new_r),
-                *[self._t.evaluate(x=new_c + new_r * (2*i/3 - 1), seed=obs["cycle"]*4+i)
+                self._act.update_param("history", obs["history"]),
+                self._act.update_param("center",  new_c),
+                self._act.update_param("radius",  new_r),
+                *[self._act.evaluate(x=new_c + new_r * (2*i/3 - 1), seed=obs["cycle"]*4+i)
                   for i in range(4)],
             ])
 
         return Decision(actions=[
-            self._t.evaluate(x=obs["center"] + obs["radius"] * (2*i/3 - 1),
+            self._act.evaluate(x=obs["center"] + obs["radius"] * (2*i/3 - 1),
                              seed=obs["cycle"]*4+i)
             for i in range(4)
         ])

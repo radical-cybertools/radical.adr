@@ -18,11 +18,11 @@ from __future__ import annotations
 
 import asyncio
 import random
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ProcessPoolExecutor
 
 from radical.asyncflow import LocalExecutionBackend, WorkflowEngine
 
-from radical.adl import Decision, LLMPolicy, Operator, Policy, decide, goals, observe, tool
+from radical.adl import Decision, LLMPolicy, Operator, Policy, decide, goals, observe, act
 from radical.adl.goals import ScientificGoal
 
 CANDIDATES = [f"mol_{i:04d}" for i in range(100)]
@@ -61,11 +61,11 @@ class ProteinDesignOperator(Operator):
         return ScientificGoal(name="good_score", metric="best_score",
                               threshold=-8.0, direction="minimize")
 
-    @tool
+    @act
     async def dock(self, candidate: str, seed: int = 0):
         return self.engine.function_task(dock_task)(candidate=candidate, seed=seed)
 
-    @tool
+    @act
     async def md_refine(self, candidate: str):
         return self.engine.function_task(md_refine_task)(candidate=candidate)
 
@@ -90,21 +90,21 @@ class ProteinDesignPolicy(Policy):
     def __init__(self, op: ProteinDesignOperator) -> None:
         super().__init__()
         self._op    = op
-        self._tools = op.get_tools()
+        self._act = op.get_actions()
 
     @decide
     async def run(self, obs: dict) -> Decision:
-        actions = [self._tools.md_refine(candidate=c)
+        actions = [self._act.md_refine(candidate=c)
                    for c in obs["high_performers"][:2]]
         for _ in range(self._op.batch_size):
             c = CANDIDATES[self._op.candidates_tried % len(CANDIDATES)]
             self._op.candidates_tried += 1
-            actions.append(self._tools.dock(candidate=c, seed=obs["cycle"]))
+            actions.append(self._act.dock(candidate=c, seed=obs["cycle"]))
         return Decision(actions=actions)
 
 
 async def main():
-    backend = await LocalExecutionBackend(ThreadPoolExecutor(max_workers=4))
+    backend = await LocalExecutionBackend(ProcessPoolExecutor(max_workers=4))
     engine  = await WorkflowEngine.create(backend)
 
     op        = ProteinDesignOperator(engine)

@@ -13,11 +13,11 @@ Usage:
 
 import asyncio
 import random
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ProcessPoolExecutor
 
 from radical.asyncflow import LocalExecutionBackend, WorkflowEngine
 
-from radical.adl import Decision, Operator, Policy, decide, goals, observe, tool
+from radical.adl import Decision, Operator, Policy, decide, goals, observe, act
 from radical.adl.goals import ScientificGoal
 
 TARGET     = 3.14159
@@ -39,7 +39,7 @@ class SearchOperator(Operator):
         return ScientificGoal(name="converged", metric="radius",
                               threshold=MIN_RADIUS, direction="minimize")
 
-    @tool
+    @act
     async def evaluate(self, x: float, seed: int = 0) -> dict:
         return self.engine.function_task(evaluate_task)(x=x, seed=seed)
 
@@ -59,7 +59,7 @@ class SearchPolicy(Policy):
 
     def __init__(self, op: SearchOperator) -> None:
         super().__init__()
-        self._tools = op.get_tools()
+        self._act = op.get_actions()
 
     @decide
     async def run(self, obs: dict) -> Decision:
@@ -69,21 +69,21 @@ class SearchPolicy(Policy):
         if obs["best"] is not None:
             new_c, new_r = obs["best"]["x"], obs["radius"] * 0.5
             return Decision(actions=[
-                self._tools.update_param("history", obs["history"]),
-                self._tools.update_param("center",  new_c),
-                self._tools.update_param("radius",  new_r),
+                self._act.update_param("history", obs["history"]),
+                self._act.update_param("center",  new_c),
+                self._act.update_param("radius",  new_r),
                 *self._spawn(new_c, new_r, obs["cycle"]),
             ])
 
         return Decision(actions=self._spawn(obs["center"], obs["radius"], obs["cycle"]))
 
     def _spawn(self, c, r, cyc):
-        return [self._tools.spawn_task("evaluate", x=c + r*(2*i/3-1), seed=cyc*4+i)
+        return [self._act.spawn_task("evaluate", x=c + r*(2*i/3-1), seed=cyc*4+i)
                 for i in range(4)]
 
 
 async def main():
-    backend = await LocalExecutionBackend(ThreadPoolExecutor())
+    backend = await LocalExecutionBackend(ProcessPoolExecutor())
     engine  = await WorkflowEngine.create(backend)
 
     op = SearchOperator(engine)

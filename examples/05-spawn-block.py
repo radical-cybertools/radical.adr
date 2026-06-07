@@ -15,28 +15,38 @@ from __future__ import annotations
 
 import asyncio
 import random
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ProcessPoolExecutor
 
 from radical.asyncflow import LocalExecutionBackend, WorkflowEngine
 
-from radical.adl import Decision, Operator, Policy, decide, goals, observe, tool
+from radical.adl import Decision, Operator, Policy, decide, goals, observe, act
 from radical.adl.goals import ScientificGoal
 
 CANDIDATES = [f"mol_{i:04d}" for i in range(30)]
 
-
-def _mock_score(candidate: str) -> float:
-    return -random.Random(hash(candidate)).uniform(3.0, 10.0)
-
-
 # ── Module-level task implementations ────────────────────────────────────────
 
-async def _preprocess_impl(c: str) -> dict:
-    return {"candidate": c, "processed": c.upper()}
+async def workflow(engine: WorkflowEngine, candidate: str) -> dict:
+    @engine.function_task
+    async def _preprocess_impl(candidate: str) -> dict:
+        return {"candidate": candidate, "processed": candidate.upper()}
 
+    @engine.function_task
+    async def _score_impl(processed) -> dict:
+        print(processed)
+        return {"processed": processed,
+                "score": -random.Random(hash(processed)).uniform(3.0, 10.0)}
+    
+    pre_future = await _preprocess_impl(candidate)
+    
+    score_result = await _score_impl(pre_future)
 
-async def _score_impl(processed: str) -> dict:
-    return {"processed": processed, "score": _mock_score(processed)}
+    print(score_result)
+
+    
+
+    return score_result
+
 
 
 # ── Operator ──────────────────────────────────────────────────────────────────
@@ -52,14 +62,10 @@ class PipelineOperator(Operator):
         return ScientificGoal(name="good_score", metric="best_score",
                               threshold=-8.0, direction="minimize")
 
-    @tool
+    @act
     async def prepare_and_score(self, candidate: str):
         """Orchestrate preprocess → score as a sequential block."""
-        async def _pipeline(c: str) -> dict:
-            pre   = await self.engine.function_task(_preprocess_impl)(c)
-            score = self.engine.function_task(_score_impl)(pre["processed"])
-            return await score
-        return self.engine.block(_pipeline)(candidate)   # returns Future
+        return self.engine.block(workflow)(self.engine, candidate)   # returns Future
 
     @observe
     def extract(self, snapshot) -> dict:
@@ -75,7 +81,7 @@ class PipelinePolicy(Policy):
     def __init__(self, op: PipelineOperator) -> None:
         super().__init__()
         self._op    = op
-        self._tools = op.get_tools()
+        self._act = op.get_actions()
 
     @decide
     async def run(self, obs: dict) -> Decision:
@@ -85,12 +91,12 @@ class PipelinePolicy(Policy):
         for _ in range(self._op.batch_size):
             c = CANDIDATES[self._op.candidates_tried % len(CANDIDATES)]
             self._op.candidates_tried += 1
-            actions.append(self._tools.prepare_and_score(candidate=c))
+            actions.append(self._act.prepare_and_score(candidate=c))
         return Decision(actions=actions)
 
 
 async def main():
-    backend = await LocalExecutionBackend(ThreadPoolExecutor(max_workers=4))
+    backend = await LocalExecutionBackend(ProcessPoolExecutor(max_workers=4))
     engine  = await WorkflowEngine.create(backend)
 
     op        = PipelineOperator(engine)

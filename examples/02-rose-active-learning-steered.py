@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import asyncio
 import pickle
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
 import numpy as np
@@ -38,7 +38,7 @@ from sklearn.metrics import mean_squared_error
 from rose.al import SequentialActiveLearner
 from rose.metrics import MEAN_SQUARED_ERROR_MSE
 
-from radical.adl import Decision, Operator, Policy, decide, goals, observe, tool
+from radical.adl import Decision, Operator, Policy, decide, goals, observe, act
 from radical.adl.goals import ScientificGoal
 
 # ── Shared state (module-level because @tool strips self) ─────────────────────
@@ -124,7 +124,7 @@ class EnsembleOperator(Operator):
         return ScientificGoal(name="converged", metric="best_mse",
                               threshold=0.005, direction="minimize")
 
-    @tool
+    @act
     async def run_learner(self, learner_id: str, n_select: int = 5) -> dict:
         """Run one ROSE learner for 5 iterations and return its final MSE."""
         learner = _make_learner(learner_id, n_select)
@@ -151,7 +151,7 @@ class EnsemblePolicy(Policy):
 
     def __init__(self, op: EnsembleOperator) -> None:
         super().__init__()
-        self._tools = op.get_tools()
+        self._act = op.get_actions()
 
     @decide
     async def run(self, obs: dict) -> Decision:
@@ -160,16 +160,16 @@ class EnsemblePolicy(Policy):
 
         if not obs["by_id"]:
             return Decision(actions=[
-                self._tools.run_learner(learner_id="A", n_select=5),
-                self._tools.run_learner(learner_id="B", n_select=5),
+                self._act.run_learner(learner_id="A", n_select=5),
+                self._act.run_learner(learner_id="B", n_select=5),
             ])
 
         a_mse  = obs["by_id"].get("A", {}).get("mse", float("inf"))
         b_mse  = obs["by_id"].get("B", {}).get("mse", float("inf"))
         a_sel, b_sel = (8, 3) if a_mse <= b_mse else (3, 8)
         return Decision(actions=[
-            self._tools.run_learner(learner_id="A", n_select=a_sel),
-            self._tools.run_learner(learner_id="B", n_select=b_sel),
+            self._act.run_learner(learner_id="A", n_select=a_sel),
+            self._act.run_learner(learner_id="B", n_select=b_sel),
         ])
 
 
@@ -177,7 +177,7 @@ class EnsemblePolicy(Policy):
 
 async def main():
     global _engine
-    backend = await LocalExecutionBackend(ThreadPoolExecutor(max_workers=4))
+    backend = await LocalExecutionBackend(ProcessPoolExecutor(max_workers=4))
     _engine = await WorkflowEngine.create(backend)
 
     op        = EnsembleOperator(_engine)

@@ -21,7 +21,7 @@ from __future__ import annotations
 import asyncio
 import os
 import random
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ProcessPoolExecutor
 
 import instructor
 from openai import AsyncOpenAI
@@ -29,7 +29,7 @@ from pydantic import BaseModel, Field
 
 from radical.asyncflow import LocalExecutionBackend, WorkflowEngine
 
-from radical.adl import Decision, LLMPolicy, Operator, decide, goals, observe, tool
+from radical.adl import Decision, LLMPolicy, Operator, decide, goals, observe, act
 from radical.adl.goals import ScientificGoal
 
 TARGET     = 3.14159
@@ -61,7 +61,7 @@ class OpenRouterPolicy(LLMPolicy):
 
     def __init__(self, api_key: str, op: "LLMSearchOperator") -> None:
         super().__init__()
-        self._tools = op.get_tools()
+        self._act = op.get_actions()
         raw         = AsyncOpenAI(api_key=api_key, base_url="https://openrouter.ai/api/v1")
         self.client = instructor.from_openai(raw)
 
@@ -76,9 +76,9 @@ class OpenRouterPolicy(LLMPolicy):
         return Decision(
             stop=sd.stop,
             actions=[
-                self._tools.update_param("center", sd.new_center),
-                self._tools.update_param("radius", sd.new_radius),
-                *[self._tools.evaluate(x=x, seed=i)
+                self._act.update_param("center", sd.new_center),
+                self._act.update_param("radius", sd.new_radius),
+                *[self._act.evaluate(x=x, seed=i)
                   for i, x in enumerate(sd.evaluations)],
             ],
         )
@@ -95,7 +95,7 @@ class LLMSearchOperator(Operator):
         return ScientificGoal(name="converged", metric="radius",
                               threshold=MIN_RADIUS, direction="minimize")
 
-    @tool
+    @act
     async def evaluate(self, x: float, seed: int = 0):
         return self.engine.function_task(evaluate_task)(x=x, seed=seed)
 
@@ -118,7 +118,7 @@ async def main():
     if not api_key:
         raise SystemExit("Set OPENROUTER_API_KEY before running.")
 
-    backend   = await LocalExecutionBackend(ThreadPoolExecutor())
+    backend   = await LocalExecutionBackend(ProcessPoolExecutor())
     engine    = await WorkflowEngine.create(backend)
     op        = LLMSearchOperator(engine)
     op.policy = OpenRouterPolicy(api_key, op)

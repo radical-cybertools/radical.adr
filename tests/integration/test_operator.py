@@ -1,6 +1,6 @@
 """Integration tests for the ADL operator cycle.
 
-All tests go through the public API only (run_to_completion, get_tools).
+All tests go through the public API only (run_to_completion, get_actions).
 The engine fixture in conftest.py uses ProcessPoolExecutor.
 """
 
@@ -10,7 +10,7 @@ import asyncio
 
 import pytest
 
-from radical.adl import Decision, Operator, Policy, decide, goals, observe, tool
+from radical.adl import Decision, Operator, Policy, decide, goals, observe, act
 from radical.adl.goals import ScientificGoal
 
 
@@ -29,7 +29,7 @@ class _LocalOp(Operator):
     def g(self):
         return ScientificGoal("done", "got", 1, "maximize")
 
-    @tool
+    @act
     async def local_fn(self, x: float) -> dict:
         return {"result": x * 2}
 
@@ -43,13 +43,13 @@ class _LocalOp(Operator):
 class _LocalPolicy(Policy):
     def __init__(self, op: _LocalOp) -> None:
         super().__init__()
-        self._t = op.get_tools()
+        self._act = op.get_actions()
 
     @decide
     async def run(self, obs: dict) -> Decision:
         if obs["got"]:
             return Decision(stop=True)
-        return Decision(actions=[self._t.local_fn(x=21.0)])
+        return Decision(actions=[self._act.local_fn(x=21.0)])
 
 
 async def test_local_tool_dispatch(engine):
@@ -69,7 +69,7 @@ class _AsyncOp(Operator):
     def g(self):
         return ScientificGoal("done", "got", 1, "maximize")
 
-    @tool
+    @act
     async def async_fn(self, x: float) -> asyncio.Future:
         return self.engine.function_task(_double_impl)(x=x)
 
@@ -83,13 +83,13 @@ class _AsyncOp(Operator):
 class _AsyncPolicy(Policy):
     def __init__(self, op: _AsyncOp) -> None:
         super().__init__()
-        self._t = op.get_tools()
+        self._act = op.get_actions()
 
     @decide
     async def run(self, obs: dict) -> Decision:
         if obs["got"]:
             return Decision(stop=True)
-        return Decision(actions=[self._t.async_fn(x=21.0)])
+        return Decision(actions=[self._act.async_fn(x=21.0)])
 
 
 async def test_async_tool_dispatch(engine):
@@ -113,12 +113,12 @@ class _UpdateOp(Operator):
 class _UpdatePolicy(Policy):
     def __init__(self, op: _UpdateOp) -> None:
         super().__init__()
-        self._t = op.get_tools()
+        self._act = op.get_actions()
 
     @decide
     async def run(self, obs: dict) -> Decision:
         if obs["cycle"] == 0:
-            return Decision(actions=[self._t.update_param("center", 42.0)])
+            return Decision(actions=[self._act.update_param("center", 42.0)])
         return Decision(stop=True)
 
 
@@ -146,14 +146,14 @@ class _GoalOp(Operator):
 class _GoalPolicy(Policy):
     def __init__(self, op: _GoalOp) -> None:
         super().__init__()
-        self._t = op.get_tools()
+        self._act = op.get_actions()
 
     @decide
     async def run(self, obs: dict) -> Decision:
         if obs["cycle"] >= 10:
             return Decision(stop=True)
         if obs["cycle"] == 0:
-            return Decision(actions=[self._t.update_param("radius", 0.001)])
+            return Decision(actions=[self._act.update_param("radius", 0.001)])
         return Decision()
 
 
@@ -200,13 +200,13 @@ class _ParentOp(Operator):
 class _ParentPolicy(Policy):
     def __init__(self, op: _ParentOp) -> None:
         super().__init__()
-        self._t = op.get_tools()
+        self._act = op.get_actions()
 
     @decide
     async def run(self, obs: dict) -> Decision:
         if obs["child_radius"] is not None:
             return Decision(actions=[
-                self._t.update_param("last_child_radius", obs["child_radius"])
+                self._act.update_param("last_child_radius", obs["child_radius"])
             ], stop=True)
         if obs["cycle"] >= 8:  # safety stop
             return Decision(stop=True)

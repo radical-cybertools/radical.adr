@@ -14,7 +14,7 @@ Technical reference for the Agentic Adaptive Decision Layer. For motivation and 
                         │  ADL boundary (this layer)
 ┌───────────────────────▼─────────────────────────────┐
 │  radical.adl                                         │
-│  Operator · Policy · Goals · Decision · ToolSet     │
+│  Operator · Policy · Goals · Decision · ActionSet     │
 └───────────────────────┬─────────────────────────────┘
                         │  AsyncFlow API
 ┌───────────────────────▼─────────────────────────────┐
@@ -44,7 +44,7 @@ Technical reference for the Agentic Adaptive Decision Layer. For motivation and 
 | **RUN** | Drain inbox (up to 64 messages): task completions, child snapshots, directives. Poll `future.state` to promote PENDING→RUNNING. |
 | **OBSERVE** | Call `@observe(snapshot)` → plain `dict` of domain observations. |
 | **DECIDE** | Call `policy.decide(obs)` → `Decision`. Check all goals; force `stop=True` if all satisfied. |
-| **ACT** | Apply each `Action`: call `@tool` methods, cancel futures, update state. Dispatch directives/snapshots. |
+| **ACT** | Apply each `Action`: call `@act` methods, cancel futures, update state. Dispatch directives/snapshots. |
 
 After each cycle, a `Snapshot` is yielded. `observations` and `directives` are cleared; `runtime`, `objectives`, and `artifacts` persist.
 
@@ -66,7 +66,7 @@ class SearchOperator(Operator):
         return ScientificGoal(name="converged", metric="radius",
                               threshold=0.005, direction="minimize")
 
-    @tool
+    @act
     async def evaluate(self, x: float, seed: int = 0) -> dict:
         rng = random.Random(seed)
         return {"x": x, "value": (x - TARGET) ** 2 + rng.gauss(0, 0.03)}
@@ -99,7 +99,7 @@ Receives the cycle's `Snapshot`, returns a `dict`. Called every cycle before DEC
 
 Returns a `Goal` or `list[Goal]`. These are **static goals** evaluated alongside runtime goals every cycle.
 
-#### `@tool`
+#### `@act`
 
 Marks an async method as an operator capability. The method **runs in the operator's event loop with `self` available**. The return value determines execution mode:
 
@@ -111,7 +111,7 @@ Marks an async method as an operator capability. The method **runs in the operat
 
 **Local execution** (computation inline, no AsyncFlow overhead):
 ```python
-@tool
+@act
 async def evaluate(self, x: float, seed: int = 0) -> dict:
     rng = random.Random(seed)
     return {"x": x, "value": (x - TARGET) ** 2 + rng.gauss(0, 0.03)}
@@ -119,14 +119,14 @@ async def evaluate(self, x: float, seed: int = 0) -> dict:
 
 **Backend task** (dispatches to `engine.function_task`; non-blocking, returns Future):
 ```python
-@tool
+@act
 async def dock(self, candidate: str) -> dict:
     return self.engine.function_task(_dock_impl)(candidate=candidate)
 ```
 
 **Orchestration block** (sequences sub-tasks; returns block Future):
 ```python
-@tool
+@act
 async def md_refine(self, candidate: str):
     async def _block(c: str) -> dict:
         prepped = await self.engine.function_task(_prep)(c)
@@ -136,16 +136,16 @@ async def md_refine(self, candidate: str):
 
 **Operator lifecycle tool** (starts a child operator as a block, enables parent-driven DAG):
 ```python
-@tool
+@act
 async def launch_child(self, dep_future=None) -> asyncio.Future:
     fut = self.child_op.start(dep_future) if dep_future else self.child_op.start()
     self.state.artifacts["child_uid"] = str(getattr(fut, "id", id(fut)))
     return fut
 ```
 
-Module-level implementations (`_dock_impl`, `_prep`, etc.) are plain async functions — pure, testable, independent of ADL. The `@tool` method is the dispatch point; the implementation is separate.
+Module-level implementations (`_dock_impl`, `_prep`, etc.) are plain async functions — pure, testable, independent of ADL. The `@act` method is the dispatch point; the implementation is separate.
 
-`@tool` methods that need upstream results accept `*dep_futures` as positional args. `_apply_one` resolves `act.depends_on` UIDs to live futures and passes them through.
+`@act` methods that need upstream results accept `*dep_futures` as positional args. `_apply_one` resolves `act.depends_on` UIDs to live futures and passes them through.
 
 ---
 
@@ -155,7 +155,7 @@ Module-level implementations (`_dock_impl`, `_prep`, etc.) are plain async funct
 class SearchPolicy(Policy):
     def __init__(self, op):
         super().__init__()
-        self._tools = op.get_tools()
+        self._act = op.get_actions()
 
     @decide
     async def run(self, obs: dict) -> Decision:
@@ -199,34 +199,34 @@ class Decision:
 
 | Kind | Effect |
 |------|--------|
-| `SPAWN_TASK` | Look up `@tool` in `_adl_tools_registry`, `await fn(self, *dep_futures, **kwargs)`, handle return |
+| `SPAWN_TASK` | Look up `@act` in `_adl_act_registry`, `await fn(self, *dep_futures, **kwargs)`, handle return |
 | `SPAWN_BLOCK` | Alias for `SPAWN_TASK` — same lookup and execution path |
 | `CANCEL_TASK` | `future.cancel()` on tracked future |
 | `UPDATE_PARAM` | `state.objectives[key] = value` |
 
-`depends_on: list[str]` on every `Action` — UIDs of futures in `state.task_futures`. Resolved to live futures before calling the `@tool` method, enabling native intra-operator DAG chaining.
+`depends_on: list[str]` on every `Action` — UIDs of futures in `state.task_futures`. Resolved to live futures before calling the `@act` method, enabling native intra-operator DAG chaining.
 
 ---
 
-### 3.6 ToolSet
+### 3.6 ActionSet
 
 ```python
-tools = op.get_tools()
+act = op.get_actions()
 
-tools.evaluate(x=1.0)                           # @tool shorthand → SPAWN_TASK
+tools.evaluate(x=1.0)                           # @act shorthand → SPAWN_TASK
 tools.spawn_task("evaluate", x=1.0)             # explicit → SPAWN_TASK
 tools.spawn_workflow("md_refine", candidate=c)  # alias → SPAWN_TASK
 tools.cancel_task(uid)                          # CANCEL_TASK
-tools.update_state("radius", 2.5)              # UPDATE_PARAM
+tools.update_param("radius", 2.5)              # UPDATE_PARAM
 tools.stop()                                   # Decision(stop=True)
 
-# depends_on — resolved to dep_futures before @tool is called:
+# depends_on — resolved to dep_futures before @act is called:
 tools.launch_child_b(depends_on=[child_a_uid])
 ```
 
 `depends_on` is a first-class parameter on all spawning methods — it is extracted from kwargs and set on `act.depends_on`, not passed as a task kwarg.
 
-LLM schema: `op.get_tools("openai")` / `"anthropic"` / `"langgraph"` — renders all `@tool` signatures and docstrings in vendor format.
+LLM schema: `op.get_actions("openai")` / `"anthropic"` / `"langgraph"` — renders all `@act` signatures and docstrings in vendor format.
 
 ---
 
@@ -271,7 +271,7 @@ All inter-component communication enters through `inbox: asyncio.Queue`.
 ```
 policy decides → Action(SPAWN_TASK, "dock", kwargs) → _apply_one
                                                            │
-                 fn = _adl_tools_registry["dock"]         │
+                 fn = _adl_act_registry["dock"]         │
                  dep_futures = resolve(act.depends_on)     │
                  result = await fn(self, *dep_futures, **kwargs)
                                                            │
@@ -282,7 +282,7 @@ policy decides → Action(SPAWN_TASK, "dock", kwargs) → _apply_one
               add_done_callback  (TASK_EVENT{DONE})        │
 ```
 
-The `@tool` method decides execution strategy. `_apply_one` is execution-strategy-agnostic — it handles the return.
+The `@act` method decides execution strategy. `_apply_one` is execution-strategy-agnostic — it handles the return.
 
 ### 4.2 Inbox Drain
 
@@ -344,13 +344,13 @@ class ParentOperator(Operator):
         self.child_a.policy = SearchPolicy(self.child_a)
         self.child_b.policy = SearchPolicy(self.child_b)
 
-    @tool
+    @act
     async def launch_child_a(self) -> asyncio.Future:
         fut = self.child_a.start()
         self.state.artifacts["child_start_uid.child-a"] = str(getattr(fut, "id", id(fut)))
         return fut
 
-    @tool
+    @act
     async def launch_child_b(self, dep_future) -> asyncio.Future:
         fut = self.child_b.start(dep_future)   # B starts when A is DONE
         self.state.artifacts["child_start_uid.child-b"] = str(getattr(fut, "id", id(fut)))
@@ -400,9 +400,9 @@ engine  = await WorkflowEngine.create(backend)
 op      = MyOperator(engine)
 ```
 
-### `@tool` and `engine.block`
+### `@act` and `engine.block`
 
-ADL does **not** pre-register `@tool` methods with AsyncFlow. Each `@tool` method calls `self.engine.function_task(fn)(...)` or `self.engine.block(fn)(...)` at invocation time — each call creates a fresh component with a new UID, which is correct by AsyncFlow's design.
+ADL does **not** pre-register `@act` methods with AsyncFlow. Each `@act` method calls `self.engine.function_task(fn)(...)` or `self.engine.block(fn)(...)` at invocation time — each call creates a fresh component with a new UID, which is correct by AsyncFlow's design.
 
 Module-level functions passed to `engine.function_task` must be importable (picklable) when using `ProcessPoolExecutor`. When using `ThreadPoolExecutor` or running locally, any async function works.
 
@@ -418,7 +418,7 @@ Requires `feature/enable_block_cancellation` in AsyncFlow:
 |---------|-----------|
 | `future.state` attribute | `_sync_running_states` polls for RUNNING transitions |
 | Block cancellation propagation | Cancelling an operator's block also cancels its spawned tasks |
-| `workflow_id` kwarg | Task attribution (passed by `@tool` methods, not `_apply_one`) |
+| `workflow_id` kwarg | Task attribution (passed by `@act` methods, not `_apply_one`) |
 | `patched_cancel` fix | `future.cancel()` returns bool, not method reference |
 | Idempotent `handle_task_cancellation` | Safe repeated cancellation |
 
@@ -428,13 +428,13 @@ Requires `feature/enable_block_cancellation` in AsyncFlow:
 
 | File | Demonstrates |
 |------|-------------|
-| `01-asyncflow-adaptive-search.py` | Minimal operator: `@tool` local, `@observe`, `@goals`, single run |
+| `01-asyncflow-adaptive-search.py` | Minimal operator: `@act` local, `@observe`, `@goals`, single run |
 | `04-protein-design.py` | Static + runtime goals; LLM-steered variant |
-| `05-spawn-block.py` | `@tool` returning block Future — sequential sub-task orchestration |
+| `05-spawn-block.py` | `@act` returning block Future — sequential sub-task orchestration |
 | `06-multi-operator.py` | N independent operators, different goals (Req 1) |
 | `07-multi-operator-same-goal.py` | `run_until_first_satisfied` — concurrent same goal (Req 2) |
-| `08-hierarchical-operator.py` | Parent-child sequential DAG via `start()` + `@tool` + `depends_on` (Req 3) |
-| `demo/demo_protein_design.py` | 30-candidate campaign: 4-phase goals, `@tool` dispatching to `function_task` and `block` |
+| `08-hierarchical-operator.py` | Parent-child sequential DAG via `start()` + `@act` + `depends_on` (Req 3) |
+| `demo/demo_protein_design.py` | 30-candidate campaign: 4-phase goals, `@act` dispatching to `function_task` and `block` |
 | `demo/demo_protein_design_llm.py` | Same campaign steered by LLM via OpenRouter |
 
 ---
@@ -445,9 +445,9 @@ Requires `feature/enable_block_cancellation` in AsyncFlow:
 
 **`@decide` is mandatory.** Empty `Policy` raises `PolicyError` on first call — no silent empty-`Decision` fallthrough.
 
-**`@tool` runs in the event loop.** The method body runs in the operator's asyncio event loop with `self` available. It is responsible for deciding execution strategy: local computation, `engine.function_task`, or `engine.block`. The operator never pre-registers tasks with AsyncFlow; registration happens at invocation time.
+**`@act` runs in the event loop.** The method body runs in the operator's asyncio event loop with `self` available. It is responsible for deciding execution strategy: local computation, `engine.function_task`, or `engine.block`. The operator never pre-registers tasks with AsyncFlow; registration happens at invocation time.
 
-**`_apply_one` is execution-agnostic.** It calls the `@tool` method, inspects the return, and routes accordingly — Future or plain value. A single code path handles all execution modes.
+**`_apply_one` is execution-agnostic.** It calls the `@act` method, inspects the return, and routes accordingly — Future or plain value. A single code path handles all execution modes.
 
 **Inbox is the only input channel.** All inputs — task completions (done-callback → `put_nowait`), local results (`put_nowait`), child snapshots, parent directives — arrive through `inbox` and are processed in `_drain_inbox`. No out-of-band state mutations.
 

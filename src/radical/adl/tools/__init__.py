@@ -1,7 +1,7 @@
-"""ToolSet — callable-first tool interface for ADL operators.
+"""ActionSet — callable-first action interface for ADL operators.
 
-Tools are Python callables first; LLM schema rendering is a view on top.
-Any reasoning backend (RulePolicy, LLMPolicy, LangGraph) can use the same tools.
+Actions are Python callables first; LLM schema rendering is a view on top.
+Any reasoning backend (RulePolicy, LLMPolicy, LangGraph) can use the same actions.
 """
 
 from __future__ import annotations
@@ -14,10 +14,10 @@ from radical.adl.decision import Action, ActionKind, Decision
 if TYPE_CHECKING:
     from radical.adl.operator import Operator
 
-__all__ = ["ToolSet"]
+__all__ = ["ActionSet"]
 
 
-class ToolSet:
+class ActionSet:
     """Python-callable tools for an operator.
 
     Built-in tools (always present)::
@@ -28,16 +28,16 @@ class ToolSet:
         tools.update_param("center", 3.14)      → Action(UPDATE_PARAM, ...)
         tools.stop()                           → Decision(stop=True)
 
-    Plus one shorthand per ``@tool`` method::
+    Plus one shorthand per ``@act`` method::
 
         tools.dock(candidate="mol.pdb", target="6LU7")
             → Action(SPAWN_TASK, "dock", {"candidate": ..., "target": ...})
 
     LLM schema rendering::
 
-        op.get_tools(format="openai")      # → list[dict]
-        op.get_tools(format="anthropic")   # → list[dict]
-        op.get_tools(format="langgraph")   # → list[BaseTool]
+        op.get_schema("openai")      # → list[dict]
+        op.get_schema("anthropic")   # → list[dict]
+        op.get_schema("langgraph")   # → list[BaseTool]
     """
 
     def __init__(self, operator: "Operator") -> None:
@@ -46,7 +46,7 @@ class ToolSet:
     # ── Built-in tools ────────────────────────────────────────────────────────
 
     def spawn_task(self, name: str, depends_on: "list[str] | None" = None, **kwargs: Any) -> Action:
-        """Spawn a registered @tool by name.
+        """Spawn a registered @act by name.
 
         ``depends_on`` is a list of task UIDs that must be DONE before this
         tool is invoked — the resolved futures are passed as positional args.
@@ -55,7 +55,7 @@ class ToolSet:
                       task_kwargs=kwargs, depends_on=depends_on or [])
 
     def spawn_workflow(self, name: str, depends_on: "list[str] | None" = None, **kwargs: Any) -> Action:
-        """Spawn a @tool method that returns a block Future (alias for spawn_task)."""
+        """Spawn a @act method that returns a block Future (alias for spawn_task)."""
         return Action(kind=ActionKind.SPAWN_TASK, task_name=name,
                       task_kwargs=kwargs, depends_on=depends_on or [])
 
@@ -71,11 +71,11 @@ class ToolSet:
         """Signal the operator loop to terminate cleanly after this cycle."""
         return Decision(stop=True)
 
-    # ── @tool shorthand ───────────────────────────────────────────────────────
+    # ── @act shorthand ───────────────────────────────────────────────────────
 
     def __getattr__(self, name: str) -> Callable[..., Action]:
         op = object.__getattribute__(self, "_operator")
-        tool_fns = type(op)._adl_tools_registry  # type: ignore[attr-defined]
+        tool_fns = type(op)._adl_act_registry  # type: ignore[attr-defined]
         fn = tool_fns.get(name)
         if fn is not None:
             def _spawn(**kwargs: Any) -> Action:
@@ -85,7 +85,7 @@ class ToolSet:
             _spawn.__name__ = name
             _spawn.__doc__  = fn.__doc__ or f"Spawn the '{name}' task."
             return _spawn
-        raise AttributeError(f"ToolSet has no tool '{name}'")
+        raise AttributeError(f"ActionSet has no act '{name}'")
 
     # ── Schema rendering ──────────────────────────────────────────────────────
 
@@ -110,7 +110,7 @@ class ToolSet:
         for name, desc, params in _BUILTIN_SPECS:
             specs.append({"name": name, "description": desc, "params": params})
 
-        for name, fn in type(op)._adl_tools_registry.items():  # type: ignore[attr-defined]
+        for name, fn in type(op)._adl_act_registry.items():  # type: ignore[attr-defined]
             try:
                 sig = inspect.signature(fn)
                 params = [
@@ -185,7 +185,7 @@ def _to_anthropic(spec: dict) -> dict:
     }
 
 
-def _to_langgraph(toolset: ToolSet, specs: list[dict]) -> list:
+def _to_langgraph(toolset: ActionSet, specs: list[dict]) -> list:
     try:
         from langchain_core.tools import StructuredTool
     except ImportError as e:
