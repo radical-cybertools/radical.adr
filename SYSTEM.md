@@ -63,8 +63,8 @@ class SearchOperator(Operator):
 
     @goals
     def convergence_criteria(self):
-        return ScientificGoal(name="converged", metric="radius",
-                              threshold=0.005, direction="minimize")
+        return Goal(name="converged", metric="radius",
+                    threshold=0.005, direction="minimize")
 
     @act
     async def evaluate(self, x: float, seed: int = 0) -> dict:
@@ -94,6 +94,8 @@ Registered once at class definition time via `__init_subclass__`.
 #### `@observe` (mandatory)
 
 Receives the cycle's `Snapshot`, returns a `dict`. Called every cycle before DECIDE. If missing, `run()` raises `TypeError` immediately — there is no default observation.
+
+`@observe` is the **single assembly point for all metrics** — task results from `snapshot.observations`, operator state from `snapshot.objectives`, or any external source (e.g. a telemetry subscription updated by the user in `main()`). `Goal.satisfied()` reads exclusively from the `obs` dict that `@observe` returns.
 
 #### `@goals` (optional)
 
@@ -169,12 +171,15 @@ class SearchPolicy(Policy):
 ### 3.4 Goals
 
 ```python
-ScientificGoal(name="mse",    metric="model_mse",  threshold=0.005, direction="minimize")
-ScientificGoal(name="gap",    metric="band_gap_ev", threshold=1.5,   direction="maximize")
-ResourceGoal  (name="gpu",    metric="gpu_percent", threshold=90.0)
+Goal(name="mse",        metric="model_mse",   threshold=0.005, direction="minimize")
+Goal(name="gap",        metric="band_gap_ev", threshold=1.5,   direction="maximize")
+Goal(name="cpu_health", metric="cpu_percent", threshold=90.0,  direction="minimize")
 ```
 
-`satisfied(obs, snapshot)` checks `obs[metric]` first, `snapshot.objectives[metric]` as fallback.
+
+`satisfied(obs, snapshot)` checks `obs[metric]` first, then `snapshot.objectives[metric]` as fallback. **`snapshot.runtime` is not checked automatically** — resource or telemetry metrics must be surfaced explicitly in `@observe`.
+
+**Goals are source-agnostic.** Whether a metric comes from a task result, operator state, or an external telemetry subscription is determined entirely by what `@observe` puts into `obs`.
 
 **Runtime goals** — proposed by policy via `Decision.goals`. Same `name` upserts in-place; new `name` adds independent requirement. Removed via `Decision.remove_goals`.
 

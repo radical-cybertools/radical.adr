@@ -11,7 +11,7 @@ import asyncio
 import pytest
 
 from radical.adl import Decision, Operator, Policy, decide, goals, observe, act
-from radical.adl.goals import ScientificGoal
+from radical.adl.goals import Goal
 
 
 # ── Module-level sync impl for function_task dispatch (must be picklable) ─────
@@ -27,7 +27,7 @@ class _LocalOp(Operator):
 
     @goals
     def g(self):
-        return ScientificGoal("done", "got", 1, "maximize")
+        return Goal("done", "got", 1, "maximize")
 
     @act
     async def local_fn(self, x: float) -> dict:
@@ -67,7 +67,7 @@ class _AsyncOp(Operator):
 
     @goals
     def g(self):
-        return ScientificGoal("done", "got", 1, "maximize")
+        return Goal("done", "got", 1, "maximize")
 
     @act
     async def async_fn(self, x: float) -> asyncio.Future:
@@ -136,7 +136,7 @@ class _GoalOp(Operator):
 
     @goals
     def g(self):
-        return ScientificGoal("done", "radius", 0.01, "minimize")
+        return Goal("done", "radius", 0.01, "minimize")
 
     @observe
     def ext(self, snap) -> dict:

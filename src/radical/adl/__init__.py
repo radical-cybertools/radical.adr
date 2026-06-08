@@ -2,31 +2,33 @@
 
 Core loop (Run → Observe → Decide → Act)::
 
-    1. RUN     — drain inbox: task results + telemetry → RuntimeState
+    1. RUN     — drain inbox: task results → RuntimeState
     2. OBSERVE — operator.observe(snapshot) → obs dict (clean domain data)
-    3. DECIDE  — policy.decide(obs) OR @loop fallback method → Decision
+    3. DECIDE  — policy.decide(obs) → Decision
     4. ACT     — apply Decision.actions → AsyncFlow calls
                check goals → stop if all satisfied
 
 Sacred boundary:
     ADL NEVER: schedule, manage execution lifecycle, resolve dependencies,
                own resources, coordinate distributed systems.
-    ADL ONLY:  observe (await future, TelemetryObserver),
+    ADL ONLY:  observe (@observe assembles metrics from any source),
                reason  (policy.decide),
-               act     (factory(), future.cancel()).
+               act     (@act calls, future.cancel()).
 
 Quick-start::
 
-    from radical.adl import Operator, act, loop, Decision, Action, ActionKind
-    from radical.adl.goals import ScientificGoal
-    from radical.adl.policy import RulePolicy
+    from radical.adl import Operator, act, Decision, goals, observe
+    from radical.adl.goals import Goal
+    from concurrent.futures import ProcessPoolExecutor
 
     class SearchOperator(Operator):
-        goals  = [ScientificGoal(name="converged", metric="radius",
-                                 threshold=0.005, direction="minimize")]
         center: float = 0.0
         radius: float = 10.0
-        history: list = []
+
+        @goals
+        def criteria(self):
+            return Goal(name="converged", metric="radius",
+                        threshold=0.005, direction="minimize")
 
         @act
         async def evaluate(self, x: float, seed: int = 0) -> dict:
@@ -34,21 +36,16 @@ Quick-start::
             rng = random.Random(seed)
             return {"x": x, "value": (x - 3.14159) ** 2 + rng.gauss(0, 0.03)}
 
-        @loop(policy=RulePolicy([
-            (lambda obs: bool(obs["new_results"]),
-             lambda obs: Decision(actions=[
-                 Action(kind=ActionKind.UPDATE_PARAM, param_key="radius",
-                        param_value=obs.get("radius", 1.0) * 0.5),
-             ])),
-            (lambda obs: True, lambda obs: Decision()),
-        ]))
-        async def adaptive_cycle(self, obs: dict) -> Decision:
-            return Decision(stop=True)
+        @observe
+        def extract(self, snapshot) -> dict:
+            results = [v for k, v in snapshot.observations.items()
+                       if k.startswith("result.") and isinstance(v, dict)]
+            return {"radius": snapshot.objectives.get("radius", self.radius),
+                    "results": results}
 
     async def main():
         from radical.asyncflow import WorkflowEngine, LocalExecutionBackend
-        from concurrent.futures import ThreadPoolExecutor
-        backend = await LocalExecutionBackend(ThreadPoolExecutor())
+        backend = await LocalExecutionBackend(ProcessPoolExecutor())
         engine  = await WorkflowEngine.create(backend)
         op = SearchOperator(engine)
         async for snapshot in op.run():
@@ -64,13 +61,10 @@ from radical.adl.errors import ADLError
 from radical.adl.errors import PolicyError
 from radical.adl.errors import RegistryError
 from radical.adl.goals import Goal
-from radical.adl.goals import ResourceGoal
-from radical.adl.goals import ScientificGoal
 from radical.adl.message import InboxMessage
 from radical.adl.message import MessageBus
 from radical.adl.message import MessageKind
 from radical.adl.observer import ObserverBase
-from radical.adl.observer import TelemetryObserver
 from radical.adl.operator import Operator
 from radical.adl.operator import goals
 from radical.adl.operator import observe
@@ -98,8 +92,6 @@ __all__ = [
     "ActionKind",
     # Goals
     "Goal",
-    "ScientificGoal",
-    "ResourceGoal",
     # Messages
     "InboxMessage",
     "MessageKind",
@@ -113,7 +105,6 @@ __all__ = [
     "ActionSet",
     # Observers
     "ObserverBase",
-    "TelemetryObserver",
     # Errors
     "ADLError",
     "PolicyError",

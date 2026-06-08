@@ -69,7 +69,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from radical.asyncflow import LocalExecutionBackend, WorkflowEngine
 from radical.adl import Decision, Operator, Policy, decide, goals, observe, tool
-from radical.adl.goals import ScientificGoal
+from radical.adl.goals import Goal
 
 TARGET     = 3.14159
 MIN_RADIUS = 0.005
@@ -99,7 +99,7 @@ class SearchOperator(Operator):
 
     @goals
     def convergence_criteria(self):
-        return ScientificGoal(
+        return Goal(
             name="converged", metric="radius",
             threshold=MIN_RADIUS, direction="minimize"
         )
@@ -221,7 +221,7 @@ cycle 11  center=+3.141563  radius=0.003906
 best x=3.141591  error=0.000032
 ```
 
-The operator stops at cycle 11 — not because a counter expired, but because the `radius` goal `(< 0.005)` was satisfied. Change the threshold in `ScientificGoal` to change when it stops.
+The operator stops at cycle 11 — not because a counter expired, but because the `radius` goal `(< 0.005)` was satisfied. Change the threshold in `Goal` to change when it stops.
 
 ---
 

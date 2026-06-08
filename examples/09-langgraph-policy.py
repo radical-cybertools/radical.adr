@@ -10,7 +10,7 @@ what ADL adds on top:
 
 ADL concepts demonstrated
   - LangGraph graph as the @decide policy
-  - ScientificGoal: operator stops when converged, not when LLM says to
+  - Goal: operator stops when converged, not when LLM says to
   - Runtime goal proposals: LangGraph agent tightens goals mid-campaign
 
 Usage:
@@ -37,7 +37,7 @@ from pydantic import BaseModel, Field
 from radical.asyncflow import LocalExecutionBackend, WorkflowEngine
 
 from radical.adl import Decision, LLMPolicy, Operator, act, decide, goals, observe
-from radical.adl.goals import ScientificGoal
+from radical.adl.goals import Goal
 
 TARGET     = 3.14159
 MIN_RADIUS = 0.005
@@ -72,7 +72,7 @@ class SearchOperator(Operator):
 
     @goals # ADL: stops when ALL goals satisfied
     def convergence_criteria(self):
-        return ScientificGoal(
+        return Goal(
             name="converged", metric="radius",
             threshold=MIN_RADIUS, direction="minimize",
         )
@@ -186,13 +186,13 @@ class LangGraphPolicy(LLMPolicy):
               for i, x in enumerate(plan.x_values)],
         ]
 
-        # ADL VALUE: the LangGraph agent can propose a new ScientificGoal
+        # ADL VALUE: the LangGraph agent can propose a new Goal
         # at runtime. ADL adds it to the active set and evaluates it every
         # cycle alongside the original goal — no restart, no code change.
         new_goals = []
         if plan.tighter_threshold is not None:
             print(f"             → proposing tighter goal: radius < {plan.tighter_threshold}")
-            new_goals.append(ScientificGoal(
+            new_goals.append(Goal(
                 name="converged_tight", metric="radius",
                 threshold=plan.tighter_threshold, direction="minimize",
             ))
@@ -223,7 +223,7 @@ async def main() -> None:
     # The operator stopped because the ScientificGoal converged —
     # not because the LLM returned stop=True.
     best = min(op.history, key=lambda r: r["value"]) if op.history else None
-    print(f"\nStopped by: ScientificGoal (autonomous) — not the LLM")
+    print(f"\nStopped by: Goal (autonomous) — not the LLM")
     print(f"Cycles: {op.state.cycle}  |  Final radius: {op.radius:.6f}")
     if best:
         print(f"Best:   x={best['x']:.6f}  error={abs(best['x'] - TARGET):.6f}")

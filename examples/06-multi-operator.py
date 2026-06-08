@@ -20,7 +20,7 @@ from concurrent.futures import ProcessPoolExecutor
 from radical.asyncflow import LocalExecutionBackend, WorkflowEngine
 
 from radical.adl import Decision, Operator, Policy, decide, goals, observe, act
-from radical.adl.goals import ScientificGoal
+from radical.adl.goals import Goal
 
 TARGET     = 3.14159
 MIN_RADIUS = 0.005
@@ -40,7 +40,7 @@ class SearchOperator(Operator):
 
     @goals
     def convergence_criteria(self):
-        return ScientificGoal(name="converged", metric="radius",
+        return Goal(name="converged", metric="radius",
                               threshold=MIN_RADIUS, direction="minimize")
 
     @act

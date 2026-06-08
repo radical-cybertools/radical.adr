@@ -39,7 +39,7 @@ from rose.al import SequentialActiveLearner
 from rose.metrics import MEAN_SQUARED_ERROR_MSE
 
 from radical.adl import Decision, Operator, Policy, decide, goals, observe, act
-from radical.adl.goals import ScientificGoal
+from radical.adl.goals import Goal
 
 # ── Shared state (module-level because @tool strips self) ─────────────────────
 
@@ -121,7 +121,7 @@ class EnsembleOperator(Operator):
 
     @goals
     def convergence_criteria(self):
-        return ScientificGoal(name="converged", metric="best_mse",
+        return Goal(name="converged", metric="best_mse",
                               threshold=0.005, direction="minimize")
 
     @act

@@ -3,7 +3,7 @@
 Usage (subclass-based)::
 
     from radical.adl import Operator, act, Decision
-    from radical.adl.goals import ScientificGoal
+    from radical.adl.goals import Goal
 
     class SearchOperator(Operator):
         center: float = 0.0
@@ -12,8 +12,8 @@ Usage (subclass-based)::
 
         @goals
         def convergence_criteria(self):
-            return ScientificGoal(name="converged", metric="radius",
-                                  threshold=0.005, direction="minimize")
+            return Goal(name="converged", metric="radius",
+                        threshold=0.005, direction="minimize")
 
         @act
         async def evaluate(self, x: float, seed: int = 0) -> dict:
@@ -23,7 +23,7 @@ Usage (subclass-based)::
             return {"x": x, "value": (x - 3.14) ** 2 + rng.gauss(0, 0.03)}
 
         # Or dispatch to AsyncFlow backend:
-        #   @tool
+        #   @act
         #   async def evaluate(self, x: float, seed: int = 0) -> dict:
         #       return self.engine.function_task(_eval_impl)(x=x, seed=seed)
 
@@ -135,8 +135,8 @@ def goals(fn: Callable) -> Callable:
         @goals
         def convergence_criteria(self):
             return [
-                ScientificGoal(name="converged", metric="radius", threshold=0.005),
-                ResourceGoal(name="cpu", metric="cpu_percent", threshold=85.0),
+                Goal(name="converged",   metric="radius",      threshold=0.005),
+                Goal(name="cpu_healthy", metric="cpu_percent", threshold=90.0),
             ]
     """
     fn._adl_goals = True  # type: ignore[attr-defined]
@@ -171,14 +171,14 @@ def _deliver_task_event(
 class Operator:
     """Agentic runtime operator.
 
-    Subclass to define tools, goals, and the adaptive cycle::
+    Subclass to define acts, goals, and the adaptive cycle::
 
         class MyOp(Operator):
             best: float = float("inf")   # persists across cycles via state.objectives
 
             @goals
             def convergence_criteria(self):
-                return ScientificGoal(name="converged", metric="best", threshold=0.01)
+                return Goal(name="converged", metric="best", threshold=0.01)
 
             @act
             async def compute(self, x: float) -> dict:
@@ -195,7 +195,7 @@ class Operator:
         op.policy = MyPolicy(op)
         async for snapshot in op.run(): ...
 
-    The operator ONLY: observes (done-callbacks, telemetry),
+    The operator ONLY: observes (done-callbacks, external subscriptions),
     reasons (``policy.decide``), and acts (``@act`` calls, ``future.cancel()``).
     It never owns scheduling, execution lifecycle, or distributed coordination.
     """
@@ -564,14 +564,6 @@ class Operator:
                 self.state.runtime[uid] = status
                 if status == "DONE":
                     self.state.observations[f"result.{uid}"] = payload.get("result")
-            else:
-                event_type = getattr(payload, "event_type", "unknown")
-                self.state.observations[f"telemetry.{event_type}"] = payload
-                if event_type == "ResourceUpdate":
-                    for attr in ("cpu_percent", "memory_percent", "gpu_percent"):
-                        val = getattr(payload, attr, None)
-                        if val is not None:
-                            self.state.runtime[attr] = val
 
         elif msg.kind == MessageKind.DIRECTIVE:
             payload = msg.payload

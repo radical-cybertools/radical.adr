@@ -23,7 +23,7 @@ from concurrent.futures import ProcessPoolExecutor
 from radical.asyncflow import LocalExecutionBackend, WorkflowEngine
 
 from radical.adl import Decision, LLMPolicy, Operator, Policy, decide, goals, observe, act
-from radical.adl.goals import ScientificGoal
+from radical.adl.goals import Goal
 
 CANDIDATES = [f"mol_{i:04d}" for i in range(100)]
 
@@ -58,7 +58,7 @@ class ProteinDesignOperator(Operator):
 
     @goals
     def convergence_criteria(self):
-        return ScientificGoal(name="good_score", metric="best_score",
+        return Goal(name="good_score", metric="best_score",
                               threshold=-8.0, direction="minimize")
 
     @act

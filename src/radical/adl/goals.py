@@ -1,7 +1,8 @@
-"""Goal types for operator convergence criteria."""
+"""Goal — the only convergence/constraint abstraction in ADL."""
 
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -11,54 +12,44 @@ if TYPE_CHECKING:
 
 @dataclass
 class Goal:
-    """Base class for operator goals.
-
-    Subclasses implement ``satisfied(obs, snapshot) → bool``.
-    The operator stops when ALL its goals are satisfied.
-    """
-    name:      str
-    metric:    str
-    threshold: float
-
-    def satisfied(self, obs: dict[str, Any], snapshot: "Snapshot") -> bool:
-        raise NotImplementedError
-
-
-@dataclass
-class ScientificGoal(Goal):
     """Satisfied when ``obs[metric]`` crosses the threshold.
 
     direction="minimize" → satisfied when obs[metric] < threshold
     direction="maximize" → satisfied when obs[metric] > threshold
+
+    Metric lookup order:
+      1. ``obs[metric]``                 — primary: what @observe explicitly returns
+      2. ``snapshot.objectives[metric]`` — fallback: operator state (e.g. radius, center)
+
+    Goals are source-agnostic. Whether the metric comes from task results, operator
+    state, a telemetry subscription, or any other external source is entirely
+    determined by what the ``@observe`` method puts into obs.
+
+    Dynamic goals proposed by a policy via ``Decision(goals=[Goal(...)])`` are
+    evaluated each cycle alongside statically declared ``@goals`` — same type,
+    same contract, same runtime upsert/remove semantics.
     """
-    direction: str = "minimize"
+    name:       str
+    metric:     str
+    threshold:  float
+    direction:  str  = "minimize"
+    _warn_once: bool = field(default=True, init=False, repr=False, compare=False)
 
     def satisfied(self, obs: dict[str, Any], snapshot: "Snapshot") -> bool:
-        # Check obs first; fall back to snapshot.objectives so goals work even
-        # when @observe doesn't explicitly surface the metric.
         val = obs.get(self.metric)
         if val is None:
             val = snapshot.objectives.get(self.metric)
         if val is None:
+            if self._warn_once:
+                warnings.warn(
+                    f"Goal '{self.name}': metric '{self.metric}' not found in obs "
+                    "or snapshot.objectives — returning False. "
+                    "Ensure @observe surfaces this metric.",
+                    UserWarning,
+                    stacklevel=2,
+                )
+                self._warn_once = False
             return False
         if self.direction == "minimize":
-            return float(val) < self.threshold
-        return float(val) > self.threshold
-
-
-@dataclass
-class ResourceGoal(Goal):
-    """Satisfied when ``snapshot.runtime[metric]`` stays within bound.
-
-    bound="below" → satisfied when runtime[metric] < threshold
-    bound="above" → satisfied when runtime[metric] > threshold
-    """
-    bound: str = "below"
-
-    def satisfied(self, obs: dict[str, Any], snapshot: "Snapshot") -> bool:
-        val = snapshot.runtime.get(self.metric)
-        if val is None:
-            return False
-        if self.bound == "below":
             return float(val) < self.threshold
         return float(val) > self.threshold
