@@ -11,7 +11,7 @@ Adaptive HPC scientific workflows — protein design, active learning, materials
 
 - **A standard cycle.** An `Operator` runs an **Observe → Decide → Act** loop over long-running HPC tasks — tasks that take minutes to hours, not milliseconds.
 - **Goal management.** Goals are first-class objects: set them statically, propose new ones at runtime, tighten or relax thresholds as the workflow runs. The operator evaluates all active goals every cycle and stops autonomously when they are all satisfied — scientific convergence and computational resource bounds alike.
-- **Computational awareness.** ADL is designed for HPC environments. `ResourceGoal` lets the operator track GPU utilization, memory pressure, and queue depth alongside scientific metrics. The steering layer knows both what the science needs and what the infrastructure allows.
+- **Computational awareness.** ADL is designed for HPC environments. `Goal` is source-agnostic — the same abstraction tracks GPU utilization, memory pressure, or queue depth alongside scientific metrics. Resource metrics are surfaced via `@observe` from any external subscription. The steering layer knows both what the science needs and what the infrastructure allows.
 
 It sits above [AsyncFlow](https://github.com/radical-cybertools/radical.asyncflow) (which handles distributed execution on HPC backends) and below your domain science (which defines what the workflow is trying to achieve).
 
@@ -68,7 +68,7 @@ import random
 from concurrent.futures import ThreadPoolExecutor
 
 from radical.asyncflow import LocalExecutionBackend, WorkflowEngine
-from radical.adl import Decision, Operator, Policy, decide, goals, observe, tool
+from radical.adl import Decision, Operator, Policy, decide, goals, observe, act
 from radical.adl.goals import Goal
 
 TARGET     = 3.14159
@@ -104,7 +104,7 @@ class SearchOperator(Operator):
             threshold=MIN_RADIUS, direction="minimize"
         )
 
-    # ── Tool: the dispatch point ──────────────────────────────────────────────
+    # ── Act: the dispatch point ───────────────────────────────────────────────
     # @act runs in the operator's event loop with self available.
     # Returning self.engine.function_task(fn)(...) dispatches to AsyncFlow
     # and returns a Future — the result arrives in the inbox when done.

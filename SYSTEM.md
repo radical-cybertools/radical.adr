@@ -239,15 +239,49 @@ LLM schema: `op.get_actions("openai")` / `"anthropic"` / `"langgraph"` — rende
 
 | Namespace | Contents | Lifetime |
 |-----------|----------|----------|
-| `observations` | Task results (`result.{uid}`), child data, telemetry | Cleared each cycle |
+| `observations` | Task results (`result.{uid}`), task errors (`error.{uid}`), child data | Cleared each cycle |
 | `runtime` | UID → `PENDING`/`RUNNING`/`DONE`/`FAILED`/`CANCELED` | Persists |
 | `objectives` | Annotated operator attrs, policy params | Persists |
 | `artifacts` | Stable identifiers, file paths | Persists |
 | `directives` | Instructions from parent | Cleared each cycle |
+| `task_context` | `uid → {name, kwargs}` for every spawned task | Persists |
 
 Live references (not in `Snapshot`): `task_futures: dict[str, Future]`, `history: deque[Snapshot]` (maxlen=64).
 
 **Snapshot** — frozen Pydantic model. Safe to log, serialize, or pass across coroutines.
+
+**Task errors** — when a task fails, `snapshot.observations["error.{uid}"]` contains:
+```python
+{"task_name": str, "message": str, "type": str}   # type = exception class name
+```
+
+Pattern for error-aware `@observe`:
+```python
+@observe
+def extract(self, snapshot) -> dict:
+    errors = {
+        uid.removeprefix("error."): info
+        for uid, info in snapshot.observations.items()
+        if uid.startswith("error.")
+    }
+    return {..., "errors": errors}
+```
+
+**Cycle history** — accessible inside `@observe` via `self.cycle_history`. Returns previous
+completed snapshots (oldest first, current cycle excluded, up to 64):
+```python
+@observe
+def extract(self, snapshot) -> dict:
+    prev    = self.cycle_history           # list of past Snapshots
+    radii   = [s.objectives.get("radius") for s in prev[-5:]]
+    stale   = len(set(radii)) == 1 and len(radii) == 5
+    return {..., "stagnating": stale}
+```
+
+**Safety valve** — `max_cycles` on `Operator.__init__` forces stop after N cycles:
+```python
+op = SearchOperator(engine, max_cycles=500)
+```
 
 ---
 
@@ -294,7 +328,9 @@ The `@act` method decides execution strategy. `_apply_one` is execution-strategy
 `_drain_inbox` processes up to 64 messages per cycle. First message: blocked wait up to 0.05s. Subsequent: `get_nowait()`. After draining: `_sync_running_states()` polls `future.state` for PENDING→RUNNING promotions.
 
 `_apply_message` merges incoming data:
-- `TASK_EVENT` → `state.runtime[uid]`, `state.observations["result.{uid}"]`
+- `TASK_EVENT` → `state.runtime[uid]`
+  - DONE: `state.observations["result.{uid}"] = result`
+  - FAILED: `state.observations["error.{uid}"] = {task_name, message, type}` — structured error visible to `@observe`
 - `DIRECTIVE` → `state.directives`
 - `SNAPSHOT` (child) → three key families:
   - `state.observations["child:{id}:{k}"]` — child's task results

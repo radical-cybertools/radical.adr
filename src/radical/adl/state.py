@@ -29,6 +29,7 @@ class Snapshot(BaseModel, frozen=True):
     objectives:   dict[str, Any]
     artifacts:    dict[str, Any]
     directives:   dict[str, Any]
+    task_context: dict[str, Any] = {}  # uid → {name: str, kwargs: dict}
 
     model_config = {"arbitrary_types_allowed": True}
 
@@ -41,13 +42,14 @@ class Snapshot(BaseModel, frozen=True):
 class RuntimeState:
     """Live, mutable state owned by one operator.
 
-    Five semantic namespaces isolate concerns:
+    Six semantic namespaces isolate concerns:
 
     observations  — what was learned from task results this cycle (cleared per cycle)
-    runtime       — ephemeral execution state: UIDs, statuses, resource metrics
+    runtime       — ephemeral execution state: UIDs, statuses
     objectives    — stable goals set externally; persist across cycles
     artifacts     — references to produced outputs (paths, identifiers)
     directives    — incoming instructions from parent/user; consumed each cycle
+    task_context  — uid → {name, kwargs} for every spawned task; persists
 
     task_futures  — live asyncio.Future references (not serializable)
     history       — bounded ring of previous Snapshots
@@ -62,6 +64,7 @@ class RuntimeState:
         self.objectives:   dict[str, Any]             = {}
         self.artifacts:    dict[str, Any]             = {}
         self.directives:   dict[str, Any]             = {}
+        self.task_context: dict[str, Any]             = {}
 
         self.task_futures: dict[str, asyncio.Future]  = {}
         self.history: deque[Snapshot]                 = deque(maxlen=_HISTORY_MAXLEN)
@@ -85,6 +88,7 @@ class RuntimeState:
             objectives   = dict(self.objectives),
             artifacts    = dict(self.artifacts),
             directives   = dict(self.directives),
+            task_context = dict(self.task_context),
         )
         self.history.append(snapshot)
         return snapshot

@@ -188,12 +188,12 @@ async def main_rhapsody() -> None:
     # User subscribes to telemetry directly — no ADL class involved
     telemetry.subscribe(_on_resource_event)
 
-    op        = SearchOperator(engine)
+    op        = SearchOperator(engine, max_cycles=100)
     op.policy = SearchPolicy(op, simulate_cpu=False)
 
     print("Resource-aware search  |  RHAPSODY backend")
     print(f"  Goals: radius < {MIN_RADIUS}  AND  cpu_percent < {CPU_LIMIT}")
-    print(f"  Telemetry poll: 1.0 s\n")
+    print(f"  Telemetry poll: 1.0 s  |  Safety valve: max_cycles=100\n")
 
     async for _ in op.run():
         pass
@@ -212,12 +212,12 @@ async def main_local() -> None:
     backend = await LocalExecutionBackend(ProcessPoolExecutor(max_workers=4))
     engine  = await WorkflowEngine.create(backend)
 
-    op        = SearchOperator(engine)
+    op        = SearchOperator(engine, max_cycles=100)
     op.policy = SearchPolicy(op, simulate_cpu=True)
 
     print("Resource-aware search  |  local backend (simulated CPU)")
     print(f"  Goals: radius < {MIN_RADIUS}  AND  cpu_percent < {CPU_LIMIT}")
-    print(f"  CPU starts at 99%, drops ~6.5% per cycle\n")
+    print(f"  CPU starts at 99%, drops ~6.5% per cycle  |  Safety valve: max_cycles=100\n")
 
     async for _ in op.run():
         pass

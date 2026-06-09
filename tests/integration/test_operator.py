@@ -223,3 +223,153 @@ async def test_snapshot_child_objectives_visible_to_parent(engine):
     await asyncio.gather(parent.run_to_completion(), child.run_to_completion())
 
     assert parent.state.objectives.get("last_child_radius") == pytest.approx(0.5)
+
+
+# ── G3: max_cycles safety valve ───────────────────────────────────────────────
+
+class _NoCycleOp(Operator):
+    @observe
+    def extract(self, snapshot) -> dict:
+        return {"cycle": snapshot.cycle}
+
+
+class _NoCyclePolicy(Policy):
+    @decide
+    async def run(self, obs: dict) -> Decision:
+        return Decision()
+
+
+async def test_max_cycles_stops_operator(engine):
+    op = _NoCycleOp(engine, max_cycles=3)
+    op.policy = _NoCyclePolicy()
+    await op.run_to_completion()
+    assert op.state.cycle == 3
+
+
+# ── G1: cycle_history visible in @observe ─────────────────────────────────────
+
+class _HistOp(Operator):
+    hist_len: int = -1
+
+    @observe
+    def extract(self, snapshot) -> dict:
+        return {"hist_len": len(self.cycle_history)}
+
+
+class _HistPolicy(Policy):
+    def __init__(self, op):
+        super().__init__()
+        self._act = op.get_actions()
+
+    @decide
+    async def run(self, obs: dict) -> Decision:
+        return Decision(actions=[self._act.update_param("hist_len", obs["hist_len"])])
+
+
+async def test_cycle_history_grows_across_cycles(engine):
+    op = _HistOp(engine, max_cycles=4)
+    op.policy = _HistPolicy(op)
+    await op.run_to_completion()
+    # After 4 cycles the history should have grown: final recorded hist_len == 3
+    assert op.hist_len == 3
+
+
+# ── G2: task_context visible in snapshot ──────────────────────────────────────
+
+class _CtxOp(Operator):
+    found_ctx: dict = {}
+
+    @act
+    async def compute(self, x: float) -> dict:
+        return {"val": x * 2}
+
+    @observe
+    def extract(self, snapshot) -> dict:
+        # On cycle 1 the task spawned in cycle 0 is done; task_context persists
+        for uid, ctx in snapshot.task_context.items():
+            if ctx.get("name") == "compute":
+                return {"ctx": ctx, "cycle": snapshot.cycle}
+        return {"ctx": {}, "cycle": snapshot.cycle}
+
+
+class _CtxPolicy(Policy):
+    def __init__(self, op):
+        super().__init__()
+        self._act = op.get_actions()
+        self._spawned = False
+
+    @decide
+    async def run(self, obs: dict) -> Decision:
+        if not self._spawned:
+            self._spawned = True
+            return Decision(actions=[
+                self._act.compute(x=42.0),
+            ])
+        ctx = obs.get("ctx", {})
+        if ctx:
+            return Decision(
+                actions=[self._act.update_param("found_ctx", ctx)],
+                stop=True,
+            )
+        return Decision()
+
+
+async def test_task_context_in_snapshot(engine):
+    op = _CtxOp(engine)
+    op.policy = _CtxPolicy(op)
+    await op.run_to_completion()
+    assert op.found_ctx.get("name") == "compute"
+    assert op.found_ctx.get("kwargs") == {"x": 42.0}
+
+
+# ── G4: failed task delivers structured error to @observe ─────────────────────
+
+async def _failing_impl(**kwargs) -> dict:
+    raise ValueError("deliberate test failure")
+
+
+class _ErrOp(Operator):
+    error_info: dict = {}
+
+    @act
+    async def failing_act(self, x: float) -> dict:
+        from radical.asyncflow import WorkflowEngine
+        return self.engine.function_task(_failing_impl)(x=x)
+
+    @observe
+    def extract(self, snapshot) -> dict:
+        errors = {
+            k.removeprefix("error."): v
+            for k, v in snapshot.observations.items()
+            if k.startswith("error.")
+        }
+        return {"errors": errors, "cycle": snapshot.cycle}
+
+
+class _ErrPolicy(Policy):
+    def __init__(self, op):
+        super().__init__()
+        self._act = op.get_actions()
+        self._spawned = False
+
+    @decide
+    async def run(self, obs: dict) -> Decision:
+        if not self._spawned:
+            self._spawned = True
+            return Decision(actions=[self._act.failing_act(x=1.0)])
+        if obs["errors"]:
+            info = next(iter(obs["errors"].values()))
+            return Decision(
+                actions=[self._act.update_param("error_info", info)],
+                stop=True,
+            )
+        return Decision()
+
+
+async def test_failed_task_error_in_observations(engine):
+    op = _ErrOp(engine)
+    op.policy = _ErrPolicy(op)
+    await op.run_to_completion()
+    assert op.error_info.get("task_name") == "failing_act"
+    assert op.error_info.get("type") == "ValueError"
+    assert "deliberate test failure" in op.error_info.get("message", "")

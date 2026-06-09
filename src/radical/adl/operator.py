@@ -61,6 +61,7 @@ _RESERVED = frozenset({
     "operator_id", "engine", "parent", "observer",
     "state", "inbox", "children",
     "_stop_event", "_adl_actionset", "_policy", "_runtime_goals", "_block_factory",
+    "_max_cycles",
 })
 
 
@@ -245,6 +246,7 @@ class Operator:
         parent:        "Operator | None"     = None,
         inbox_maxsize: int                   = 0,
         observer:      "ObserverBase | None" = None,
+        max_cycles:    int | None            = None,
     ) -> None:
         object.__setattr__(self, "operator_id",  operator_id or type(self).__name__)
         object.__setattr__(self, "engine",       engine)
@@ -256,6 +258,7 @@ class Operator:
         object.__setattr__(self, "children",     {})
         object.__setattr__(self, "_stop_event",    asyncio.Event())
         object.__setattr__(self, "_block_factory", None)
+        object.__setattr__(self, "_max_cycles",    max_cycles)
 
         object.__setattr__(self, "_policy",        policy)
         object.__setattr__(self, "_runtime_goals", [])
@@ -375,6 +378,27 @@ class Operator:
         """Runtime goals currently proposed by the policy."""
         return object.__getattribute__(self, "_runtime_goals")
 
+    @property
+    def cycle_history(self) -> "list[Snapshot]":
+        """Read-only list of previous cycle snapshots (oldest first, up to 64).
+
+        Accessible inside ``@observe`` as ``self.cycle_history``. The current
+        cycle's snapshot is NOT included — only completed past cycles.
+
+        Example usage in ``@observe``::
+
+            @observe
+            def extract(self, snapshot) -> dict:
+                prev   = self.cycle_history
+                radii  = [s.objectives.get("radius") for s in prev[-5:]]
+                stale  = len(set(radii)) == 1 and len(radii) == 5
+                return {..., "stagnating": stale}
+        """
+        history = object.__getattribute__(self, "state").history
+        # history[-1] is the current cycle's snapshot (appended by snapshot() before
+        # @observe runs) — exclude it so @observe can compare past cycles to the present.
+        return list(history)[:-1] if history else []
+
     # ── Hierarchy ─────────────────────────────────────────────────────────────
 
     def spawn_child(
@@ -471,6 +495,10 @@ class Operator:
                 self.state.clear_cycle()
                 self.state.cycle += 1
 
+                mc = object.__getattribute__(self, "_max_cycles")
+                if mc is not None and self.state.cycle >= mc:
+                    self._stop_event.set()
+
                 if decision.stop:
                     break
 
@@ -564,6 +592,14 @@ class Operator:
                 self.state.runtime[uid] = status
                 if status == "DONE":
                     self.state.observations[f"result.{uid}"] = payload.get("result")
+                elif status == "FAILED":
+                    error = payload.get("error")
+                    ctx   = self.state.task_context.get(uid, {})
+                    self.state.observations[f"error.{uid}"] = {
+                        "task_name": ctx.get("name", "unknown"),
+                        "message":   str(error) if error else "unknown",
+                        "type":      type(error).__name__ if error else "unknown",
+                    }
 
         elif msg.kind == MessageKind.DIRECTIVE:
             payload = msg.payload
@@ -611,12 +647,14 @@ class Operator:
                 uid = str(getattr(result, "id", id(result)))
                 self.state.task_futures[uid] = result
                 self.state.runtime[uid]      = "PENDING"
+                self.state.task_context[uid] = {"name": act.task_name, "kwargs": act.task_kwargs}
                 result.add_done_callback(
                     lambda fut, _uid=uid: _deliver_task_event(fut, _uid, self.inbox)
                 )
             elif result is not None:
                 # Local result — deliver to inbox so @observe sees it next cycle
                 uid = f"local.{act.task_name}.{id(result)}"
+                self.state.task_context[uid] = {"name": act.task_name, "kwargs": act.task_kwargs}
                 self.inbox.put_nowait(InboxMessage(
                     kind      = MessageKind.TASK_EVENT,
                     sender_id = "adl.local",
