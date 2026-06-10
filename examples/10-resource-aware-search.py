@@ -4,13 +4,13 @@ Adaptive search with resource-aware goals.
 
 Demonstrates that ``Goal`` is source-agnostic: the same type expresses both
 a scientific convergence criterion and a resource constraint. ``@observe`` is
-the single assembly point for all metrics — ADL has no knowledge of where
+the single assembly point for all metrics — ADR has no knowledge of where
 they originate.
 
-ADL concepts demonstrated
+ADR concepts demonstrated
   - Single ``Goal`` type for scientific AND resource metrics
   - ``@observe`` assembles metrics from task results AND a user-managed
-    telemetry subscription — no ADL telemetry classes involved
+    telemetry subscription — no ADR telemetry classes involved
   - Policy throttles task count when ``cpu_percent`` is high
   - ``--local`` mode: policy simulates CPU via ``update_param``; same Goals,
     same operator code, different metric source
@@ -29,9 +29,9 @@ from concurrent.futures import ProcessPoolExecutor
 
 from radical.asyncflow import LocalExecutionBackend, WorkflowEngine
 
-from radical.adl import Decision, Operator, act, decide, goals, observe
-from radical.adl.goals import Goal
-from radical.adl.policy.base import Policy
+from radical.adr import Decision, Operator, act, decide, goals, observe
+from radical.adr.goals import Goal
+from radical.adr.policy.base import Policy
 
 TARGET     = 3.14159
 MIN_RADIUS = 0.005
@@ -44,15 +44,15 @@ async def _evaluate_impl(x: float, seed: int = 0) -> dict:
     return {"x": x, "value": (x - TARGET) ** 2 + rng.gauss(0, 0.03)}
 
 
-# ── User-managed resource state (updated outside ADL) ─────────────────────────
+# ── User-managed resource state (updated outside ADR) ─────────────────────────
 # The user subscribes to RHAPSODY (or any external stream) and stores the latest
-# resource metrics here. ADL has no knowledge of this dict or its source.
+# resource metrics here. ADR has no knowledge of this dict or its source.
 
 _resource: dict = {}
 
 
 async def _on_resource_event(event: object) -> None:
-    """User-defined RHAPSODY subscriber — no ADL types used."""
+    """User-defined RHAPSODY subscriber — no ADR types used."""
     if (getattr(event, "event_type", None) == "ResourceUpdate"
             and getattr(event, "resource_scope", "per_node") == "per_node"):
         val = getattr(event, "cpu_percent", None)
@@ -185,7 +185,7 @@ async def main_rhapsody() -> None:
     engine    = await WorkflowEngine.create(backend)
     telemetry = await engine.start_telemetry(resource_poll_interval=1.0)
 
-    # User subscribes to telemetry directly — no ADL class involved
+    # User subscribes to telemetry directly — no ADR class involved
     telemetry.subscribe(_on_resource_event)
 
     op        = SearchOperator(engine, max_cycles=100)

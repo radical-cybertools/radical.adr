@@ -1,4 +1,4 @@
-"""Integration tests for the ADL operator cycle.
+"""Integration tests for the ADR operator cycle.
 
 All tests go through the public API only (run_to_completion, get_actions).
 The engine fixture in conftest.py uses ProcessPoolExecutor.
@@ -10,8 +10,8 @@ import asyncio
 
 import pytest
 
-from radical.adl import Decision, Operator, Policy, decide, goals, observe, act
-from radical.adl.goals import Goal
+from radical.adr import Decision, Operator, Policy, decide, goals, observe, act
+from radical.adr.goals import Goal
 
 
 # ── Module-level sync impl for function_task dispatch (must be picklable) ─────

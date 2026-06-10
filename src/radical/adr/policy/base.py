@@ -5,8 +5,8 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any, Callable
 
-from radical.adl.decision import Decision
-from radical.adl.errors import PolicyError
+from radical.adr.decision import Decision
+from radical.adr.errors import PolicyError
 
 log = logging.getLogger(__name__)
 
@@ -33,7 +33,7 @@ def decide(fn: Callable) -> Callable:
 
 
 class Policy:
-    """Base class for all ADL policies, and a composition class.
+    """Base class for all ADR policies, and a composition class.
 
     **Subclass with @decide** (primary usage)::
 

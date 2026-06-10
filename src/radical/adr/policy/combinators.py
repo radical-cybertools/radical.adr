@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from radical.adl.decision import Decision
-from radical.adl.policy.base import Policy
+from radical.adr.decision import Decision
+from radical.adr.policy.base import Policy
 
 
 class ChainPolicy(Policy):

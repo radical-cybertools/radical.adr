@@ -1,28 +1,36 @@
 ---
-title: "ADL — Adaptive Decision Layer"
-description: "An autonomous steering layer for HPC scientific workflows."
+title: "ADR — Autonomous Decision Runtime"
+description: "An autonomous steering runtime for HPC scientific workflows."
 ---
 
-## What is ADL?
+## What is ADR?
 
 Adaptive HPC scientific workflows — protein design, active learning, materials screening — all share the same steering loop: submit work to a cluster, observe partial results, decide what to run next, repeat until the science converges. Every project reimplements this from scratch, differently, incompatibly.
 
-**ADL does more than standardize that loop.** It provides a principled runtime for the entire adaptive steering layer:
+**ADR does more than standardize that loop.** It provides a principled runtime for the entire adaptive steering capability:
 
 - **A standard cycle.** An `Operator` runs an **Observe → Decide → Act** loop over long-running HPC tasks — tasks that take minutes to hours, not milliseconds.
 - **Goal management.** Goals are first-class objects: set them statically, propose new ones at runtime, tighten or relax thresholds as the workflow runs. The operator evaluates all active goals every cycle and stops autonomously when they are all satisfied — scientific convergence and computational resource bounds alike.
-- **Computational awareness.** ADL is designed for HPC environments. `Goal` is source-agnostic — the same abstraction tracks GPU utilization, memory pressure, or queue depth alongside scientific metrics. Resource metrics are surfaced via `@observe` from any external subscription. The steering layer knows both what the science needs and what the infrastructure allows.
+- **Computational awareness.** ADR is designed for HPC environments. `Goal` is source-agnostic — the same abstraction tracks GPU utilization, memory pressure, or queue depth alongside scientific metrics. Resource metrics are surfaced via `@observe` from any external subscription. The steering runtime knows both what the science needs and what the infrastructure allows.
 
 It sits above [AsyncFlow](https://github.com/radical-cybertools/radical.asyncflow) (which handles distributed execution on HPC backends) and below your domain science (which defines what the workflow is trying to achieve).
 
 ```
-[Domain Science — your objectives, your data]
-         ↕  ← ADL fills this gap
-[Operator: Observe → Decide → Act  |  Goals: scientific + computational]
-         ↕  ← standardized
-[Computational Workflows — AsyncFlow: highly async graph layer for HPC]
-         ↕  ← standardized
-[AI-HPC runtime system — RHAPSODY: scalable AI and execution runtime system for HPC]
+┌──────────────────────────────────────────────────────────┐
+│  Domain Science  (your objectives, your data)            │
+│                                                          │
+│    ┌──────────────────────────────────────────────┐     │
+│    │  ADR  (Observe → Decide → Act · Goals)       │     │
+│    └──────────────────────┬───────────────────────┘     │
+└───────────────────────────│──────────────────────────────┘
+                            │  standardized
+┌───────────────────────────▼──────────────────────────────┐
+│  AsyncFlow — HPC Workflow Execution                      │
+└───────────────────────────┬──────────────────────────────┘
+                            │  standardized
+┌───────────────────────────▼──────────────────────────────┐
+│  RHAPSODY · RADICAL-Pilot · HPC Backends                 │
+└──────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -31,12 +39,12 @@ It sits above [AsyncFlow](https://github.com/radical-cybertools/radical.asyncflo
 
 <CodeGroup>
 ```bash pip
-pip install radical.adl
+pip install radical.adr
 ```
 
 ```bash source
-git clone https://github.com/radical-cybertools/radical.adl
-cd radical.adl && pip install -e .
+git clone https://github.com/radical-cybertools/radical.adr
+cd radical.adr && pip install -e .
 ```
 </CodeGroup>
 
@@ -68,8 +76,8 @@ import random
 from concurrent.futures import ThreadPoolExecutor
 
 from radical.asyncflow import LocalExecutionBackend, WorkflowEngine
-from radical.adl import Decision, Operator, Policy, decide, goals, observe, act
-from radical.adl.goals import Goal
+from radical.adr import Decision, Operator, Policy, decide, goals, observe, act
+from radical.adr.goals import Goal
 
 TARGET     = 3.14159
 MIN_RADIUS = 0.005

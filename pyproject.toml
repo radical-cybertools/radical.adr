@@ -3,9 +3,9 @@ requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "radical.adl"
+name = "radical.adr"
 version = "0.1.0"
-description = "Agentic Adaptive Decision Layer for AsyncFlow"
+description = "Autonomous Decision Runtime for HPC scientific workflows"
 authors = [
     {name = "Aymen Alsaadi", email = "aymen.alsaadi@rutgers.edu"},
     {name = "RADICAL Lab"},
@@ -28,7 +28,7 @@ dev = [
 where = ["src"]
 
 [tool.setuptools.package-data]
-"radical.adl" = ["py.typed"]
+"radical.adr" = ["py.typed"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

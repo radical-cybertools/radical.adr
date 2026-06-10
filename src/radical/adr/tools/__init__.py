@@ -1,4 +1,4 @@
-"""ActionSet — callable-first action interface for ADL operators.
+"""ActionSet — callable-first action interface for ADR operators.
 
 Actions are Python callables first; LLM schema rendering is a view on top.
 Any reasoning backend (RulePolicy, LLMPolicy, LangGraph) can use the same actions.
@@ -9,28 +9,28 @@ from __future__ import annotations
 import inspect
 from typing import TYPE_CHECKING, Any, Callable
 
-from radical.adl.decision import Action, ActionKind, Decision
+from radical.adr.decision import Action, ActionKind, Decision
 
 if TYPE_CHECKING:
-    from radical.adl.operator import Operator
+    from radical.adr.operator import Operator
 
 __all__ = ["ActionSet"]
 
 
 class ActionSet:
-    """Python-callable tools for an operator.
+    """Python-callable actions for an operator.
 
-    Built-in tools (always present)::
+    Built-in actions (always present)::
 
-        tools.spawn_task("evaluate", x=1.0)    → Action(SPAWN_TASK, ...)
-        tools.spawn_workflow("refine_block")   → Action(SPAWN_BLOCK, ...)
-        tools.cancel_task("uid-abc")           → Action(CANCEL_TASK, ...)
-        tools.update_param("center", 3.14)      → Action(UPDATE_PARAM, ...)
-        tools.stop()                           → Decision(stop=True)
+        acts.spawn_task("evaluate", x=1.0)    → Action(SPAWN_TASK, ...)
+        acts.spawn_workflow("refine_block")   → Action(SPAWN_BLOCK, ...)
+        acts.cancel_task("uid-abc")           → Action(CANCEL_TASK, ...)
+        acts.update_param("center", 3.14)     → Action(UPDATE_PARAM, ...)
+        acts.stop()                           → Decision(stop=True)
 
     Plus one shorthand per ``@act`` method::
 
-        tools.dock(candidate="mol.pdb", target="6LU7")
+        acts.dock(candidate="mol.pdb", target="6LU7")
             → Action(SPAWN_TASK, "dock", {"candidate": ..., "target": ...})
 
     LLM schema rendering::
@@ -43,13 +43,13 @@ class ActionSet:
     def __init__(self, operator: "Operator") -> None:
         object.__setattr__(self, "_operator", operator)
 
-    # ── Built-in tools ────────────────────────────────────────────────────────
+    # ── Built-in actions ─────────────────────────────────────────────────────
 
     def spawn_task(self, name: str, depends_on: "list[str] | None" = None, **kwargs: Any) -> Action:
         """Spawn a registered @act by name.
 
         ``depends_on`` is a list of task UIDs that must be DONE before this
-        tool is invoked — the resolved futures are passed as positional args.
+        action is invoked — the resolved futures are passed as positional args.
         """
         return Action(kind=ActionKind.SPAWN_TASK, task_name=name,
                       task_kwargs=kwargs, depends_on=depends_on or [])
@@ -75,8 +75,8 @@ class ActionSet:
 
     def __getattr__(self, name: str) -> Callable[..., Action]:
         op = object.__getattribute__(self, "_operator")
-        tool_fns = type(op)._adl_act_registry  # type: ignore[attr-defined]
-        fn = tool_fns.get(name)
+        act_fns = type(op)._adl_act_registry  # type: ignore[attr-defined]
+        fn = act_fns.get(name)
         if fn is not None:
             def _spawn(**kwargs: Any) -> Action:
                 deps = kwargs.pop("depends_on", [])
@@ -90,7 +90,7 @@ class ActionSet:
     # ── Schema rendering ──────────────────────────────────────────────────────
 
     def get_schema(self, format: str = "openai") -> list:
-        """Render all tools in the requested vendor format."""
+        """Render all @act methods in the requested vendor format."""
         specs = self._collect_specs()
         if format == "openai":
             return [_to_openai(s) for s in specs]

@@ -1,4 +1,4 @@
-"""radical.adl — Agentic Adaptive Decision Layer for AsyncFlow.
+"""radical.adr — Autonomous Decision Runtime for AsyncFlow.
 
 Core loop (Run → Observe → Decide → Act)::
 
@@ -9,16 +9,16 @@ Core loop (Run → Observe → Decide → Act)::
                check goals → stop if all satisfied
 
 Sacred boundary:
-    ADL NEVER: schedule, manage execution lifecycle, resolve dependencies,
+    ADR NEVER: schedule, manage execution lifecycle, resolve dependencies,
                own resources, coordinate distributed systems.
-    ADL ONLY:  observe (@observe assembles metrics from any source),
+    ADR ONLY:  observe (@observe assembles metrics from any source),
                reason  (policy.decide),
                act     (@act calls, future.cancel()).
 
 Quick-start::
 
-    from radical.adl import Operator, act, Decision, goals, observe
-    from radical.adl.goals import Goal
+    from radical.adr import Operator, act, Decision, goals, observe
+    from radical.adr.goals import Goal
     from concurrent.futures import ProcessPoolExecutor
 
     class SearchOperator(Operator):
@@ -53,29 +53,29 @@ Quick-start::
         await engine.shutdown()
 """
 
-from radical.adl.decision import Action
-from radical.adl.decision import ActionKind
-from radical.adl.decision import Decision
-from radical.adl.errors import ActionError
-from radical.adl.errors import ADLError
-from radical.adl.errors import PolicyError
-from radical.adl.errors import RegistryError
-from radical.adl.goals import Goal
-from radical.adl.message import InboxMessage
-from radical.adl.message import MessageBus
-from radical.adl.message import MessageKind
-from radical.adl.observer import ObserverBase
-from radical.adl.operator import Operator
-from radical.adl.operator import goals
-from radical.adl.operator import observe
-from radical.adl.operator import act
-from radical.adl.policy.base import Policy
-from radical.adl.policy.base import decide
-from radical.adl.policy.combinators import ChainPolicy
-from radical.adl.policy.llm import LLMPolicy
-from radical.adl.state import RuntimeState
-from radical.adl.state import Snapshot
-from radical.adl.tools import ActionSet
+from radical.adr.decision import Action
+from radical.adr.decision import ActionKind
+from radical.adr.decision import Decision
+from radical.adr.errors import ActionError
+from radical.adr.errors import ADLError
+from radical.adr.errors import PolicyError
+from radical.adr.errors import RegistryError
+from radical.adr.goals import Goal
+from radical.adr.message import InboxMessage
+from radical.adr.message import MessageBus
+from radical.adr.message import MessageKind
+from radical.adr.observer import ObserverBase
+from radical.adr.operator import Operator
+from radical.adr.operator import goals
+from radical.adr.operator import observe
+from radical.adr.operator import act
+from radical.adr.policy.base import Policy
+from radical.adr.policy.base import decide
+from radical.adr.policy.combinators import ChainPolicy
+from radical.adr.policy.llm import LLMPolicy
+from radical.adr.state import RuntimeState
+from radical.adr.state import Snapshot
+from radical.adr.tools import ActionSet
 
 __all__ = [
     # Operator + decorators

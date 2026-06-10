@@ -5,8 +5,8 @@ import warnings
 
 import pytest
 
-from radical.adl.goals import Goal
-from radical.adl.state import Snapshot
+from radical.adr.goals import Goal
+from radical.adr.state import Snapshot
 
 
 def _snap(**runtime) -> Snapshot:

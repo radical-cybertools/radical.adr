@@ -1,12 +1,12 @@
-# Agentic Adaptive Decision Layer (ADL)
+# Autonomous Decision Runtime (ADR)
 
-## Why ADL Exists
+## Why ADR Exists
 
 Scientific computing is no longer about running a fixed set of simulations and collecting results. Modern HPC scientific workflows are iterative: submit experiments to a cluster, observe partial results, decide what to run next, and repeat until something converges. This pattern underlies every serious computational science application — drug discovery, materials design, protein engineering, climate modeling, active learning.
 
 The loop that governs this process — **observe what came back, decide what to do next, change the running computation** — has been implemented ad-hoc inside every application. Systems like IMPRESS, ROSE, and Campaign Manager each solve this problem from scratch, in incompatible ways, every time. The execution layer beneath them (RADICAL-Pilot, AsyncFlow) is standardized. The adaptive steering layer above is not.
 
-**ADL does more than standardize the adaptive steering layer.** It provides the full runtime infrastructure for autonomous HPC scientific workflows: a principled Observe → Decide → Act cycle, first-class goals that can be set, tracked, and dynamically expanded at runtime, and explicit awareness of the computational environment — because in HPC, what the science needs and what the infrastructure allows are both convergence criteria.
+**ADR does more than standardize the adaptive steering loop.** It provides the full runtime infrastructure for autonomous HPC scientific workflows: a principled Observe → Decide → Act cycle, first-class goals that can be set, tracked, and dynamically expanded at runtime, and explicit awareness of the computational environment — because in HPC, what the science needs and what the infrastructure allows are both convergence criteria.
 
 ---
 
@@ -15,18 +15,23 @@ The loop that governs this process — **observe what came back, decide what to 
 Modern scientific computing stacks look like this:
 
 ```
-[Domain Science: IMPRESS / ROSE / Campaign Manager / ...]
-              ↕  ← this layer is always ad-hoc
-[Adaptive Steering: Observe → Decide → Act]
-              ↕  ← standardized
-[AsyncFlow — Async Workflow Execution]
-              ↕  ← standardized
-[RADICAL-Pilot — HPC Backends: Frontier, Summit, local clusters]
+┌─────────────────────────────────────────────────────────────┐
+│  Domain Science  (IMPRESS · ROSE · Campaign Manager · ...)  │
+│                                                             │
+│    ┌─────────────────────────────────────────┐             │
+│    │  ADR  ←  this component is always ad-hoc│             │
+│    │  Observe → Decide → Act                 │             │
+│    └─────────────────┬───────────────────────┘             │
+└──────────────────────│──────────────────────────────────────┘
+                       │  standardized
+              [AsyncFlow — HPC Execution]
+                       │  standardized
+              [RADICAL-Pilot · HPC Backends]
 ```
 
 The execution layer is well-studied and standardized. The domain science layer is application-specific and always will be. The adaptive steering layer — the loop that connects science to computation — is the gap. It is written differently in every project, tested differently in every project, and cannot be reused, composed, or extended across projects.
 
-ADL fills that gap with a single abstraction: the **Operator**, which runs a principled Observe → Decide → Act cycle over long-running HPC tasks, tracks scientific and computational goals as first-class runtime objects, and stops autonomously when both the science is done and the resource constraints are satisfied.
+ADR fills that gap with a single abstraction: the **Operator**, which runs a principled Observe → Decide → Act cycle over long-running HPC tasks, tracks scientific and computational goals as first-class runtime objects, and stops autonomously when both the science is done and the resource constraints are satisfied.
 
 ---
 
@@ -36,11 +41,11 @@ The adaptive steering loop in scientific computing has specific requirements tha
 
 **Observations are sparse.** HPC tasks take minutes to hours. A steering decision is made once per cycle, not thousands of times per second. The framework must be designed for this cadence.
 
-**Tasks are distributed.** Work runs on remote compute resources managed by RADICAL-Pilot or equivalent. The steering layer never owns execution — it only decides what to submit and when.
+**Tasks are distributed.** Work runs on remote compute resources managed by RADICAL-Pilot or equivalent. The steering runtime never owns execution — it only decides what to submit and when.
 
 **Convergence is a scientific criterion.** "Stop when band gap exceeds 1.5 eV" or "stop when model uncertainty drops below 5%" are scientific hypotheses, not program counters. They must be first-class, not embedded as magic constants in loop conditions.
 
-**Convergence is also a computational criterion.** In an HPC environment, resource availability is a constraint that evolves at runtime. "Throttle spawning when GPU utilization exceeds 90%" or "pause when queue depth exceeds capacity" are as real as any scientific stopping condition. The steering layer must be able to express, evaluate, and act on both kinds of criteria simultaneously.
+**Convergence is also a computational criterion.** In an HPC environment, resource availability is a constraint that evolves at runtime. "Throttle spawning when GPU utilization exceeds 90%" or "pause when queue depth exceeds capacity" are as real as any scientific stopping condition. The steering runtime must be able to express, evaluate, and act on both kinds of criteria simultaneously.
 
 **The policy — what to compute next — must be replaceable.** An HPC scientific workflow should run identically whether steered by domain rules, a machine learning model, or a large language model. Switching the decision logic must not require rewriting the workflow.
 
@@ -48,43 +53,43 @@ No existing framework was designed with all five of these requirements in mind.
 
 ---
 
-## What ADL Adds
+## What ADR Adds
 
 ### Formal Separation of Concerns
 
-ADL enforces a strict three-step cycle each iteration:
+ADR enforces a strict three-step cycle each iteration:
 
 1. **Observe** — extract domain metrics from task results (MSE, docking scores, uncertainties, resource utilization)
 2. **Decide** — a pluggable policy maps the observation to a structured decision
 3. **Act** — the decision is applied: new tasks are spawned, running tasks are cancelled, parameters are updated
 
-This separation is not obvious. Most systems conflate observation with decision logic, or decision logic with execution management. ADL makes each step an explicit, independently testable, independently replaceable unit.
+This separation is not obvious. Most systems conflate observation with decision logic, or decision logic with execution management. ADR makes each step an explicit, independently testable, independently replaceable unit.
 
 ### LLM as a Scientific Steering Policy
 
-ADL introduces a new use case for large language models: **scientific decision-maker**. Not LLM as an orchestrator (the LangGraph model), and not LLM as a distributed actor in a multi-agent system (the Academy model) — LLM as a reasoning engine that answers the question:
+ADR introduces a new use case for large language models: **scientific decision-maker**. Not LLM as an orchestrator (the LangGraph model), and not LLM as a distributed actor in a multi-agent system (the Academy model) — LLM as a reasoning engine that answers the question:
 
 > *Given these simulation results, which experiments should I run next?*
 
-This is a fundamentally different use of language models. The LLM sees domain observations — MSE values, docking scores, uncertainty estimates — and produces a structured decision about which HPC tasks to spawn next. A researcher can connect a language model to an HPC scientific workflow with a single policy class. ADL provides the infrastructure that makes this safe, reproducible, and composable.
+This is a fundamentally different use of language models. The LLM sees domain observations — MSE values, docking scores, uncertainty estimates — and produces a structured decision about which HPC tasks to spawn next. A researcher can connect a language model to an HPC scientific workflow with a single policy class. ADR provides the infrastructure that makes this safe, reproducible, and composable.
 
-### ADL and LangGraph Compose — They Do Not Compete
+### ADR and LangGraph Compose — They Do Not Compete
 
-LangGraph and ADL solve different problems and fit naturally together.
+LangGraph and ADR solve different problems and fit naturally together.
 
 **LangGraph** is a reasoning engine. It defines how a language model thinks: which tools it calls, how it chains reasoning steps, how it produces structured decisions. LangGraph is excellent at this and should be used for it.
 
-**ADL** is a workflow execution and governance layer. It defines what computation runs on HPC infrastructure, how results flow back to the policy, when the workflow stops, and how the operator recovers from infrastructure failures. ADL knows nothing about how the policy reasons — only that it returns a structured decision each cycle.
+**ADR** is a workflow execution and governance runtime. It defines what computation runs on HPC infrastructure, how results flow back to the policy, when the workflow stops, and how the operator recovers from infrastructure failures. ADR knows nothing about how the policy reasons — only that it returns a structured decision each cycle.
 
-These two concerns are orthogonal. **A LangGraph graph is a valid ADL policy.** The graph contributes reasoning and structured output. ADL contributes execution dispatch, goal evaluation, autonomous stopping, and failure recovery. Neither needs to know what the other is doing. Neither replaces the other.
+These two concerns are orthogonal. **A LangGraph graph is a valid ADR policy.** The graph contributes reasoning and structured output. ADR contributes execution dispatch, goal evaluation, autonomous stopping, and failure recovery. Neither needs to know what the other is doing. Neither replaces the other.
 
-This means a researcher can use LangGraph to express the scientific decision-making logic — what to run next, how to tighten the search, what new criteria to propose — while relying on ADL to ensure the workflow executes correctly on HPC infrastructure, terminates autonomously when the science is done, and does not require human supervision.
+This means a researcher can use LangGraph to express the scientific decision-making logic — what to run next, how to tighten the search, what new criteria to propose — while relying on ADR to ensure the workflow executes correctly on HPC infrastructure, terminates autonomously when the science is done, and does not require human supervision.
 
-See `examples/09-langgraph-policy.py` for a complete working integration: a LangGraph agent steers an adaptive search and proposes new goals at runtime, while ADL handles execution, convergence checking, and autonomous stopping.
+See `examples/09-langgraph-policy.py` for a complete working integration: a LangGraph agent steers an adaptive search and proposes new goals at runtime, while ADR handles execution, convergence checking, and autonomous stopping.
 
 ### Convergence Goals as a First-Class Abstraction
 
-ADL introduces **Goals** as a first-class runtime concept. A goal is a named, evaluable convergence criterion:
+ADR introduces **Goals** as a first-class runtime concept. A goal is a named, evaluable convergence criterion:
 
 ```python
 Goal(name="band_gap_target", metric="band_gap",    threshold=1.5,  direction="maximize")
@@ -108,7 +113,7 @@ This is a qualitatively different model from stop conditions embedded in loop lo
 
 ### Runtime Goal Modification
 
-ADL supports **dynamic goal proposals at runtime**. A policy — including an LLM — can propose new goals, update existing ones, or revoke them entirely during execution.
+ADR supports **dynamic goal proposals at runtime**. A policy — including an LLM — can propose new goals, update existing ones, or revoke them entirely during execution.
 
 A concrete scenario: an LLM steering a materials screening workflow observes in cycle 3 that candidates with high electrical conductivity are also showing unexpectedly favorable mechanical properties. It proposes a new goal:
 
@@ -122,7 +127,7 @@ This is **online problem reformulation** — the ability to change what "done" m
 
 ### Multi-Goal Convergence
 
-ADL evaluates all active goals simultaneously, including those proposed at runtime. The stopping condition is:
+ADR evaluates all active goals simultaneously, including those proposed at runtime. The stopping condition is:
 
 ```
 stop ← all(goal.satisfied(obs) for goal in static_goals + runtime_goals)
@@ -144,7 +149,7 @@ Because the policy is a separate object assigned to the operator, the same HPC s
 - A hybrid — LLM as primary, rules as fallback when the LLM fails
 - Multiple policies in composition
 
-Switching requires one assignment. The operator, its tools, its observations, and its goals are untouched.
+Switching requires one assignment. The operator, its acts, its observations, and its goals are untouched.
 
 ### N Independent Operators
 
@@ -154,7 +159,7 @@ This matches how computational science actually works: run multiple strategies i
 
 ### Autonomous Operation
 
-An ADL operator is autonomous in a precise, verifiable sense. Six properties hold simultaneously:
+An ADR operator is autonomous in a precise, verifiable sense. Six properties hold simultaneously:
 
 **Self-directed stopping.** The operator decides when the workflow is finished. Every cycle, it evaluates all active goals — scientific and computational — against the latest observations. When every goal is satisfied, the operator stops itself — no counter expiry, no human signal, no external monitor required. The stopping condition is a judgment encoded as data, not a magic number embedded in a loop.
 
@@ -174,7 +179,7 @@ These six properties are enforced structurally, not by convention. The policy ha
 
 ## What an Operator Can Do
 
-The capabilities of an ADL operator fall into three categories: execution, goal management, and coordination.
+The capabilities of an ADR operator fall into three categories: execution, goal management, and coordination.
 
 ### Execution
 
@@ -182,7 +187,7 @@ An operator can spawn and cancel any unit of work that AsyncFlow can express:
 
 - **Spawn a task** — dispatch a function to a backend executor (thread pool, process pool, HPC node). The task runs asynchronously; the result arrives in the operator's inbox when complete.
 - **Spawn a workflow** — dispatch a multi-step block that orchestrates sub-tasks in sequence or in parallel. The workflow runs as a single schedulable unit with its own lifecycle.
-- **Spawn a child operator** — start another full ADL operator as a schedulable block. The child runs its own independent observe/decide/act loop. Its lifecycle — when it starts, what it depends on, when it stops — is controlled by the parent through the same primitives used for tasks and workflows.
+- **Spawn a child operator** — start another full ADR operator as a schedulable block. The child runs its own independent observe/decide/act loop. Its lifecycle — when it starts, what it depends on, when it stops — is controlled by the parent through the same primitives used for tasks and workflows.
 - **Cancel any of the above** — cancel any tracked future by UID. Cancellation is synchronous and immediate. When a workflow or operator block is cancelled, all tasks it spawned are cancelled automatically.
 - **Execute locally** — run lightweight computation inline in the operator's event loop without involving AsyncFlow. Results are delivered to the inbox with the same 1-cycle latency as remote tasks, keeping the observation model uniform.
 
@@ -211,7 +216,7 @@ What an operator cannot do natively: communicate directly with a peer operator a
 
 ## Comparison to Related Systems
 
-| Capability | LangGraph | Academy | ADL |
+| Capability | LangGraph | Academy | ADR |
 |---|---|---|---|
 | Designed for HPC task execution | ✗ | ✗ | ✓ |
 | Task duration | milliseconds | always-on | minutes–hours |
@@ -228,11 +233,11 @@ What an operator cannot do natively: communicate directly with a peer operator a
 | N independent operators | subgraphs | actor peers | ✓ |
 | Resource-aware stopping | ✗ | ✗ | ✓ |
 | Separation of observe/decide/act | ✗ | ✗ | ✓ (enforced) |
-| Usable as an ADL policy | ✓ | ✗ | — |
+| Usable as an ADR policy | ✓ | ✗ | — |
 
-**LangGraph** is designed for LLM-orchestrated interactive workflows. It has no model for HPC execution, long-running tasks, or convergence goals. It is not a competitor to ADL — it is a reasoning engine that can serve as an ADL policy. LangGraph reasons about what to compute next; ADL executes it on HPC infrastructure, tracks goals, and stops autonomously.
+**LangGraph** is designed for LLM-orchestrated interactive workflows. It has no model for HPC execution, long-running tasks, or convergence goals. It is not a competitor to ADR — it is a reasoning engine that can serve as an ADR policy. LangGraph reasons about what to compute next; ADR executes it on HPC infrastructure, tracks goals, and stops autonomously.
 
-**Academy** provides a model for distributed stateful actors coordinating across federated infrastructure. Its agents are compute nodes; ADL operators are steering controllers. These are different abstractions for different problems at different layers of the stack.
+**Academy** provides a model for distributed stateful actors coordinating across federated infrastructure. Its agents are compute nodes; ADR operators are steering controllers. These are different abstractions for different problems at different layers of the stack.
 
 ---
 
@@ -240,7 +245,7 @@ What an operator cannot do natively: communicate directly with a peer operator a
 
 **LLM-steered protein design** — An HPC scientific workflow runs docking simulations on candidate molecules. Each hour, an LLM reviews partial results and decides which candidates to refine further with molecular dynamics. A resource goal automatically throttles spawning when GPU utilization exceeds 90%. The LLM proposes a new goal mid-workflow when it observes an unexpected binding mode.
 
-**Ensemble active learning** — Two Gaussian process learners with different kernels run in parallel, each as an independent operator. An ADL operator observes their MSE each round and allocates more compute budget to whichever is converging faster. Both stop when their shared convergence goal is satisfied.
+**Ensemble active learning** — Two Gaussian process learners with different kernels run in parallel, each as an independent operator. An ADR operator observes their MSE each round and allocates more compute budget to whichever is converging faster. Both stop when their shared convergence goal is satisfied.
 
 **Adaptive materials screening** — An operator searches a chemical parameter space. An LLM steering the workflow proposes a new convergence criterion after observing an unexpected electronic property in cycle 4. The workflow continues with both the original goal and the newly discovered one, stopping only when both are satisfied.
 
@@ -258,9 +263,9 @@ The following gaps exist in the current implementation. Each entry names the gap
 
 **Gap:** Block cancellation, `future.state`, `workflow_id` kwarg, and `patched_cancel` live on the `feature/enable_block_cancellation` branch of AsyncFlow. The AsyncFlow main branch does not include these.
 
-**Consequence:** Running ADL with operator-as-block (`start()`), task cancellation, or `RUNNING` state detection requires the feature branch. A team cannot install from main and get full ADL behavior.
+**Consequence:** Running ADR with operator-as-block (`start()`), task cancellation, or `RUNNING` state detection requires the feature branch. A team cannot install from main and get full ADR behavior.
 
-**Blocker:** AsyncFlow maintainers must review and merge `feature/enable_block_cancellation`. This is external to ADL. Until merged, teams must explicitly install from the feature branch and accept instability.
+**Blocker:** AsyncFlow maintainers must review and merge `feature/enable_block_cancellation`. This is external to ADR. Until merged, teams must explicitly install from the feature branch and accept instability.
 
 ---
 
@@ -270,7 +275,7 @@ The following gaps exist in the current implementation. Each entry names the gap
 
 **Consequence:** The concurrent multi-operator pattern (multiple operators sharing a joint objective) requires a coordinator parent, which serializes the coordination signal through one event loop. True peer-to-peer decision sharing is not expressible.
 
-**Blocker:** No native AsyncFlow primitive for operator-to-operator message passing exists. Resolution requires either (a) a shared queue primitive in AsyncFlow, or (b) an ADL messaging bus — a shared inbox or broker that multiple operators can write to and read from. Neither is designed yet.
+**Blocker:** No native AsyncFlow primitive for operator-to-operator message passing exists. Resolution requires either (a) a shared queue primitive in AsyncFlow, or (b) an ADR messaging bus — a shared inbox or broker that multiple operators can write to and read from. Neither is designed yet.
 
 ---
 
@@ -300,7 +305,7 @@ task results, telemetry, external sources alike.
 **Pattern for resource metrics:**
 
 ```python
-# 1. Subscribe to RHAPSODY telemetry directly (no ADL classes involved):
+# 1. Subscribe to RHAPSODY telemetry directly (no ADR classes involved):
 _resource: dict = {}
 async def on_event(event):
     if getattr(event, "event_type", None) == "ResourceUpdate":
@@ -333,9 +338,9 @@ See `examples/10-resource-aware-search.py` for a complete working example.
 
 **Gap:** All operator state — objectives, task futures, cycle count, observations — is in-memory and ephemeral. If the process dies for any reason (node failure, OOM, timeout), the workflow state is lost.
 
-**Consequence:** ADL workflows are not survivable. This is acceptable for short experiments (minutes to an hour) but unacceptable for realistic HPC scientific workflows that may run for hours or days on shared resources with wall-time limits.
+**Consequence:** ADR workflows are not survivable. This is acceptable for short experiments (minutes to an hour) but unacceptable for realistic HPC scientific workflows that may run for hours or days on shared resources with wall-time limits.
 
-**Blocker:** No persistence layer exists in ADL or AsyncFlow. Resolution requires one of: (a) periodic `Snapshot` serialization to disk, or (b) an AsyncFlow checkpoint-and-restore API. The `Snapshot` dataclass is already serialization-friendly; a `pickle` or JSON dump of `operator.state` is technically straightforward but untested.
+**Blocker:** No persistence layer exists in ADR or AsyncFlow. Resolution requires one of: (a) periodic `Snapshot` serialization to disk, or (b) an AsyncFlow checkpoint-and-restore API. The `Snapshot` dataclass is already serialization-friendly; a `pickle` or JSON dump of `operator.state` is technically straightforward but untested.
 
 ---
 
@@ -373,7 +378,7 @@ See `examples/10-resource-aware-search.py` for a complete working example.
 
 **Gap:** A `Decision` holds a flat list of actions that all execute unconditionally in order. The policy cannot express "run task A, then if its result exceeds threshold, run task B, otherwise run task C" — any condition requires waiting for results in the next cycle.
 
-**Consequence:** Simple conditional logic that would be a single if-statement in procedural code costs a full HPC cycle (potentially hours) in ADL. Policies that need tight feedback between tasks must either use the `depends_on` chaining pattern (which only sequences, not conditionally branches) or accept the extra-cycle overhead.
+**Consequence:** Simple conditional logic that would be a single if-statement in procedural code costs a full HPC cycle (potentially hours) in ADR. Policies that need tight feedback between tasks must either use the `depends_on` chaining pattern (which only sequences, not conditionally branches) or accept the extra-cycle overhead.
 
 **Blocker:** Conditional branching would require either (a) a new `ConditionalAction` wrapper that binds a predicate to downstream actions, or (b) a richer `@act` orchestration pattern where the method itself contains the condition using `await` on futures inline. Option (b) is already expressible via `engine.block` but is undiscoverable and bypasses the Decision model.
 
@@ -381,7 +386,7 @@ See `examples/10-resource-aware-search.py` for a complete working example.
 
 ## MVP Solidification Checklist
 
-The following items are required to harden the current ADL implementation for handoff to a team testing it on real use cases. Items are ordered by priority.
+The following items are required to harden the current ADR implementation for handoff to a team testing it on real use cases. Items are ordered by priority.
 
 ### P0 — Blocking for any use
 
@@ -417,13 +422,13 @@ These must be in place for a team to work productively.
 
 ## Summary
 
-ADL addresses a gap in the scientific computing software stack that has existed as long as adaptive HPC scientific workflows have. The systems above it (domain science) and below it (HPC execution) are well-studied. The steering layer between them has been reimplemented from scratch in every project.
+ADR addresses a gap in the scientific computing software stack that has existed as long as adaptive HPC scientific workflows have. The systems it connects — domain science above and HPC execution below — are well-studied. The steering loop between them has been reimplemented from scratch in every project.
 
-ADL makes that layer:
+ADR makes it:
 - **Reusable** — the same operator pattern works for molecular dynamics, active learning, and optimization
 - **Composable** — policies, goals, and operators combine cleanly
 - **Autonomous** — the operator stops itself when science is done, restructures its own objectives as it learns, and schedules its own work without a human in the loop
-- **LLM-ready** — a language model can steer any ADL operator without modifying the workflow
+- **LLM-ready** — a language model can steer any ADR operator without modifying the workflow
 - **Goal-directed** — convergence spans both scientific criteria and computational resource bounds, is not a loop counter, and can evolve as the workflow runs
 
-The result is a system where an operator — whether steered by rules, an ML model, or an LLM — runs a complete HPC scientific workflow from start to finish without human intervention: spawning work, observing results, restructuring what it is trying to achieve, and stopping when both the science and the infrastructure say it is done. That capability, at scale, on real supercomputer infrastructure, is what ADL uniquely enables.
+The result is a system where an operator — whether steered by rules, an ML model, or an LLM — runs a complete HPC scientific workflow from start to finish without human intervention: spawning work, observing results, restructuring what it is trying to achieve, and stopping when both the science and the infrastructure say it is done. That capability, at scale, on real supercomputer infrastructure, is what ADR uniquely enables.

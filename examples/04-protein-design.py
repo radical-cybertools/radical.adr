@@ -1,14 +1,14 @@
 """04-protein-design.py
 
-Protein design pipeline steered by an ADL operator.
+Protein design pipeline steered by an ADR operator.
 
-ADL concepts demonstrated
-  - Multiple @tool methods (dock, md_refine)
+ADR concepts demonstrated
+  - Multiple @act methods (dock, md_refine)
   - @observe, @goals
   - Policy(primary=MockLLMPolicy(), fallback=ProteinDesignPolicy(op))
   - Both policies use @decide — same shape regardless of type
 
-NOTE: Uses mock docking — replace @tool bodies with real calls for production.
+NOTE: Uses mock docking — replace @act bodies with real calls for production.
 
 Usage:
     python 04-protein-design.py
@@ -22,8 +22,8 @@ from concurrent.futures import ProcessPoolExecutor
 
 from radical.asyncflow import LocalExecutionBackend, WorkflowEngine
 
-from radical.adl import Decision, LLMPolicy, Operator, Policy, decide, goals, observe, act
-from radical.adl.goals import Goal
+from radical.adr import Decision, LLMPolicy, Operator, Policy, decide, goals, observe, act
+from radical.adr.goals import Goal
 
 CANDIDATES = [f"mol_{i:04d}" for i in range(100)]
 

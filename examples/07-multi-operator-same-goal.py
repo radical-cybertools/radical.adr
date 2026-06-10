@@ -4,7 +4,7 @@ Two operators racing to satisfy the same convergence goal concurrently.
 The first to satisfy the goal cancels the other via a done-callback —
 no shared state, no new primitives, pure asyncio.
 
-ADL concepts demonstrated
+ADR concepts demonstrated
   - Req 2: Multi-Operators (concurrent) same goal
   - run_until_first_satisfied — coordination via add_done_callback
   - Each operator is fully independent (own state, own tasks)
@@ -25,8 +25,8 @@ from concurrent.futures import ProcessPoolExecutor
 
 from radical.asyncflow import LocalExecutionBackend, WorkflowEngine
 
-from radical.adl import Decision, Operator, Policy, decide, goals, observe, act
-from radical.adl.goals import Goal
+from radical.adr import Decision, Operator, Policy, decide, goals, observe, act
+from radical.adr.goals import Goal
 
 TARGET     = 3.14159
 MIN_RADIUS = 0.005

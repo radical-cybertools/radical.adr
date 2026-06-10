@@ -1,30 +1,30 @@
-# ADL System Overview
+# ADR System Overview
 
-Technical reference for the Agentic Adaptive Decision Layer. For motivation and scientific context, see [ADL.md](ADL.md).
+Technical reference for the Autonomous Decision Runtime. For motivation and scientific context, see [ADR.md](ADR.md).
 
 ---
 
 ## 1. Stack Position
 
 ```
-┌─────────────────────────────────────────────────────┐
-│  Domain Science                                      │
-│  IMPRESS · ROSE · Campaign Manager · custom scripts │
-└───────────────────────┬─────────────────────────────┘
-                        │  ADL boundary (this layer)
-┌───────────────────────▼─────────────────────────────┐
-│  radical.adl                                         │
-│  Operator · Policy · Goals · Decision · ActionSet     │
-└───────────────────────┬─────────────────────────────┘
-                        │  AsyncFlow API
-┌───────────────────────▼─────────────────────────────┐
-│  radical.asyncflow                                   │
-│  WorkflowEngine · function_task · engine.block      │
-└───────────────────────┬─────────────────────────────┘
-                        │  execution backend
-┌───────────────────────▼─────────────────────────────┐
-│  RADICAL-Pilot · LocalExecutionBackend · HPC cluster│
-└─────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│  Domain Science                                              │
+│  IMPRESS · ROSE · Campaign Manager · custom scripts         │
+│                                                              │
+│    ┌────────────────────────────────────────────────────┐   │
+│    │  radical.adr  (ADR — Autonomous Decision Runtime)  │   │
+│    │  Operator · Policy · Goals · Decision · ActionSet  │   │
+│    └────────────────────────┬───────────────────────────┘   │
+└─────────────────────────────│────────────────────────────────┘
+                              │  AsyncFlow API
+┌─────────────────────────────▼────────────────────────────────┐
+│  radical.asyncflow                                           │
+│  WorkflowEngine · function_task · engine.block              │
+└─────────────────────────────┬────────────────────────────────┘
+                              │  execution backend
+┌─────────────────────────────▼────────────────────────────────┐
+│  RADICAL-Pilot · LocalExecutionBackend · HPC cluster        │
+└──────────────────────────────────────────────────────────────┘
 ```
 
 **Sacred boundary:** the Operator only Observes, Decides, and Acts. It never owns scheduling, execution lifecycle, or distributed resources.
@@ -136,7 +136,7 @@ async def md_refine(self, candidate: str):
     return self.engine.block(_block)(candidate)
 ```
 
-**Operator lifecycle tool** (starts a child operator as a block, enables parent-driven DAG):
+**Operator lifecycle act** (starts a child operator as a block, enables parent-driven DAG):
 ```python
 @act
 async def launch_child(self, dep_future=None) -> asyncio.Future:
@@ -145,7 +145,7 @@ async def launch_child(self, dep_future=None) -> asyncio.Future:
     return fut
 ```
 
-Module-level implementations (`_dock_impl`, `_prep`, etc.) are plain async functions — pure, testable, independent of ADL. The `@act` method is the dispatch point; the implementation is separate.
+Module-level implementations (`_dock_impl`, `_prep`, etc.) are plain async functions — pure, testable, independent of ADR. The `@act` method is the dispatch point; the implementation is separate.
 
 `@act` methods that need upstream results accept `*dep_futures` as positional args. `_apply_one` resolves `act.depends_on` UIDs to live futures and passes them through.
 
@@ -216,17 +216,17 @@ class Decision:
 ### 3.6 ActionSet
 
 ```python
-act = op.get_actions()
+acts = op.get_actions()
 
-tools.evaluate(x=1.0)                           # @act shorthand → SPAWN_TASK
-tools.spawn_task("evaluate", x=1.0)             # explicit → SPAWN_TASK
-tools.spawn_workflow("md_refine", candidate=c)  # alias → SPAWN_TASK
-tools.cancel_task(uid)                          # CANCEL_TASK
-tools.update_param("radius", 2.5)              # UPDATE_PARAM
-tools.stop()                                   # Decision(stop=True)
+acts.evaluate(x=1.0)                           # @act shorthand → SPAWN_TASK
+acts.spawn_task("evaluate", x=1.0)             # explicit → SPAWN_TASK
+acts.spawn_workflow("md_refine", candidate=c)  # alias → SPAWN_TASK
+acts.cancel_task(uid)                          # CANCEL_TASK
+acts.update_param("radius", 2.5)               # UPDATE_PARAM
+acts.stop()                                    # Decision(stop=True)
 
 # depends_on — resolved to dep_futures before @act is called:
-tools.launch_child_b(depends_on=[child_a_uid])
+acts.launch_child_b(depends_on=[child_a_uid])
 ```
 
 `depends_on` is a first-class parameter on all spawning methods — it is extracted from kwargs and set on `act.depends_on`, not passed as a task kwarg.
@@ -299,13 +299,13 @@ All inter-component communication enters through `inbox: asyncio.Queue`.
 
 **Async tasks:** `future.add_done_callback(_deliver_task_event)` — synchronous, zero watcher coroutines, O(1) registration.
 
-**Local tools:** result delivered via `inbox.put_nowait(TASK_EVENT{DONE, result})` — same 1-cycle latency as async tasks, same visibility in next cycle's `@observe`.
+**Local acts:** result delivered via `inbox.put_nowait(TASK_EVENT{DONE, result})` — same 1-cycle latency as async tasks, same visibility in next cycle's `@observe`.
 
 ---
 
 ## 4. Runtime Internals
 
-### 4.1 Tool Execution Path
+### 4.1 Act Execution Path
 
 ```
 policy decides → Action(SPAWN_TASK, "dock", kwargs) → _apply_one
@@ -405,7 +405,7 @@ class ParentOperator(Operator):
 
 **Sequencing** is expressed via `depends_on` in the policy:
 ```python
-Decision(actions=[tools.launch_child_b(depends_on=[obs["child_a_uid"]])])
+Decision(actions=[acts.launch_child_b(depends_on=[obs["child_a_uid"]])])
 ```
 AsyncFlow resolves child-a's block Future before starting child-b's block — no external scaffolding.
 
@@ -443,7 +443,7 @@ op      = MyOperator(engine)
 
 ### `@act` and `engine.block`
 
-ADL does **not** pre-register `@act` methods with AsyncFlow. Each `@act` method calls `self.engine.function_task(fn)(...)` or `self.engine.block(fn)(...)` at invocation time — each call creates a fresh component with a new UID, which is correct by AsyncFlow's design.
+ADR does **not** pre-register `@act` methods with AsyncFlow. Each `@act` method calls `self.engine.function_task(fn)(...)` or `self.engine.block(fn)(...)` at invocation time — each call creates a fresh component with a new UID, which is correct by AsyncFlow's design.
 
 Module-level functions passed to `engine.function_task` must be importable (picklable) when using `ProcessPoolExecutor`. When using `ThreadPoolExecutor` or running locally, any async function works.
 
@@ -455,7 +455,7 @@ Module-level functions passed to `engine.function_task` must be importable (pick
 
 Requires `feature/enable_block_cancellation` in AsyncFlow:
 
-| Feature | ADL usage |
+| Feature | ADR usage |
 |---------|-----------|
 | `future.state` attribute | `_sync_running_states` polls for RUNNING transitions |
 | Block cancellation propagation | Cancelling an operator's block also cancels its spawned tasks |

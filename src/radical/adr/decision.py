@@ -7,7 +7,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from radical.adl.goals import Goal
+from radical.adr.goals import Goal
 
 
 class ActionKind(str, Enum):

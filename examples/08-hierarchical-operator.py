@@ -3,10 +3,10 @@
 Dynamic parent-child DAG: parent operator sequences two child operators
 through its own observe/decide/act loop.
 
-ADL concepts demonstrated
-  - @tool returning a Future from child_op.start() — operator as block
+ADR concepts demonstrated
+  - @act returning a Future from child_op.start() — operator as block
   - Parent drives child lifecycle: launch A, then B only after A finishes
-  - dep_futures passed through @tool to child.start() for native AsyncFlow DAG
+  - dep_futures passed through @act to child.start() for native AsyncFlow DAG
   - SNAPSHOT messaging: children report back to parent each cycle
   - No external scaffolding — the parent's run() loop drives the entire DAG
 
@@ -28,8 +28,8 @@ from concurrent.futures import ProcessPoolExecutor
 
 from radical.asyncflow import LocalExecutionBackend, WorkflowEngine
 
-from radical.adl import Decision, Operator, Policy, decide, goals, observe, act
-from radical.adl.goals import Goal
+from radical.adr import Decision, Operator, Policy, decide, goals, observe, act
+from radical.adr.goals import Goal
 
 TARGET     = 3.14159
 MIN_RADIUS = 0.005
@@ -103,7 +103,7 @@ class ParentOperator(Operator):
 
     def __init__(self, engine, operator_id=None, **kwargs):
         super().__init__(engine, operator_id, **kwargs)
-        # Children are instance attributes — accessible via self in @tool methods.
+        # Children are instance attributes — accessible via self in @act methods.
         # parent=self ensures _dispatch sends SNAPSHOT messages to this operator.
         self.child_a = SearchOperator(engine, "child-a", parent=self)
         self.child_b = SearchOperator(engine, "child-b", parent=self)

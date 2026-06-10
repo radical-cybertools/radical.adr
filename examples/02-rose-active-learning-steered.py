@@ -1,14 +1,14 @@
 """02-rose-ensemble-steered.py
 
-Two ROSE SequentialActiveLearner instances steered by one ADL operator.
+Two ROSE SequentialActiveLearner instances steered by one ADR operator.
 
-Each ADL cycle spawns both learners as @tool tasks.  The operator observes
+Each ADR cycle spawns both learners as @act tasks.  The operator observes
 their MSE, then steers: the better-performing learner gets more active
 learning budget (n_select) next cycle.  Both learners accumulate labeled
 data across cycles via their own pickle files.
 
-ADL concepts demonstrated
-  - @tool wrapping a multi-step ROSE run (simulation → train → active-learn)
+ADR concepts demonstrated
+  - @act wrapping a multi-step ROSE run (simulation → train → active-learn)
   - @observe extracting per-learner metrics
   - EnsemblePolicy(RulePolicy) allocating n_select budget based on comparative MSE
   - ScientificGoal stopping when either learner crosses the MSE threshold
@@ -38,10 +38,10 @@ from sklearn.metrics import mean_squared_error
 from rose.al import SequentialActiveLearner
 from rose.metrics import MEAN_SQUARED_ERROR_MSE
 
-from radical.adl import Decision, Operator, Policy, decide, goals, observe, act
-from radical.adl.goals import Goal
+from radical.adr import Decision, Operator, Policy, decide, goals, observe, act
+from radical.adr.goals import Goal
 
-# ── Shared state (module-level because @tool strips self) ─────────────────────
+# ── Shared state (module-level because @act impls take no self) ──────────────
 
 _engine: WorkflowEngine | None = None
 

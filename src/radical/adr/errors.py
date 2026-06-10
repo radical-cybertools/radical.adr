@@ -1,10 +1,10 @@
-"""ADL exception hierarchy."""
+"""ADR exception hierarchy."""
 
 from __future__ import annotations
 
 
 class ADLError(Exception):
-    """Base exception for all radical.adl errors."""
+    """Base exception for all radical.adr errors."""
 
 
 class PolicyError(ADLError):

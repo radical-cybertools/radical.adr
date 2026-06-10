@@ -1,11 +1,11 @@
 """05-spawn-block.py
 
-Spawning an AsyncFlow workflow block from an ADL operator using @tool.
+Spawning an AsyncFlow workflow block from an ADR operator using @act.
 
-ADL concepts demonstrated
-  - @tool returning a block Future — method body orchestrates sub-tasks
-  - tools.prepare_and_score(...) dispatches to the @tool which calls engine.block
-  - No register_workflow_fn needed — the @tool method IS the workflow entry point
+ADR concepts demonstrated
+  - @act returning a block Future — method body orchestrates sub-tasks
+  - acts.prepare_and_score(...) dispatches to the @act which calls engine.block
+  - No register_workflow_fn needed — the @act method IS the workflow entry point
 
 Usage:
     python 05-spawn-block.py
@@ -19,8 +19,8 @@ from concurrent.futures import ProcessPoolExecutor
 
 from radical.asyncflow import LocalExecutionBackend, WorkflowEngine
 
-from radical.adl import Decision, Operator, Policy, decide, goals, observe, act
-from radical.adl.goals import Goal
+from radical.adr import Decision, Operator, Policy, decide, goals, observe, act
+from radical.adr.goals import Goal
 
 CANDIDATES = [f"mol_{i:04d}" for i in range(30)]
 

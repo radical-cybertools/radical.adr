@@ -2,8 +2,8 @@
 
 Adaptive search for the minimum of f(x) = (x - TARGET)² + noise.
 
-ADL concepts demonstrated
-  - Operator: @tool, @observe, @goals
+ADR concepts demonstrated
+  - Operator: @act, @observe, @goals
   - Policy:   @decide — the single explicit entry point
   - op.policy = SearchPolicy(op) — one clean assign
 
@@ -17,8 +17,8 @@ from concurrent.futures import ProcessPoolExecutor
 
 from radical.asyncflow import LocalExecutionBackend, WorkflowEngine
 
-from radical.adl import Decision, Operator, Policy, decide, goals, observe, act
-from radical.adl.goals import Goal
+from radical.adr import Decision, Operator, Policy, decide, goals, observe, act
+from radical.adr.goals import Goal
 
 TARGET     = 3.14159
 MIN_RADIUS = 0.005

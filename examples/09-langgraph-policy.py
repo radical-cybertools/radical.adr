@@ -3,12 +3,12 @@
 Adaptive search steered by a LangGraph policy.
 
 Extends the minimal LangGraph pattern (StateGraph + structured output) to show
-what ADL adds on top:
+what ADR adds on top:
 
   LangGraph  — reasons about observations and decides what to compute next
-  ADL        — executes decisions on AsyncFlow, tracks goals, stops autonomously
+  ADR        — executes decisions on AsyncFlow, tracks goals, stops autonomously
 
-ADL concepts demonstrated
+ADR concepts demonstrated
   - LangGraph graph as the @decide policy
   - Goal: operator stops when converged, not when LLM says to
   - Runtime goal proposals: LangGraph agent tightens goals mid-campaign
@@ -36,8 +36,8 @@ from pydantic import BaseModel, Field
 
 from radical.asyncflow import LocalExecutionBackend, WorkflowEngine
 
-from radical.adl import Decision, LLMPolicy, Operator, act, decide, goals, observe
-from radical.adl.goals import Goal
+from radical.adr import Decision, LLMPolicy, Operator, act, decide, goals, observe
+from radical.adr.goals import Goal
 
 TARGET     = 3.14159
 MIN_RADIUS = 0.005
@@ -70,14 +70,14 @@ class SearchOperator(Operator):
     radius:  float = 5.0
     history: list  = []
 
-    @goals # ADL: stops when ALL goals satisfied
+    @goals # ADR: stops when ALL goals satisfied
     def convergence_criteria(self):
         return Goal(
             name="converged", metric="radius",
             threshold=MIN_RADIUS, direction="minimize",
         )
 
-    @act                                            # ADL: dispatches to AsyncFlow backend
+    @act                                            # ADR: dispatches to AsyncFlow backend
     async def evaluate(self, x: float, seed: int = 0):
         return self.engine.function_task(_evaluate_impl)(x=x, seed=seed)
 
@@ -115,10 +115,10 @@ class EvaluationPlan(BaseModel):
 # ── LangGraph policy ──────────────────────────────────────────────────────────
 
 class LangGraphPolicy(LLMPolicy):
-    """LangGraph reasoning graph used as the ADL @decide policy.
+    """LangGraph reasoning graph used as the ADR @decide policy.
 
     LangGraph handles: LLM reasoning + structured output each cycle.
-    ADL handles:       @act dispatch to AsyncFlow, goal evaluation,
+    ADR handles:       @act dispatch to AsyncFlow, goal evaluation,
                        runtime goal proposals, autonomous stopping.
     """
 
@@ -186,8 +186,8 @@ class LangGraphPolicy(LLMPolicy):
               for i, x in enumerate(plan.x_values)],
         ]
 
-        # ADL VALUE: the LangGraph agent can propose a new Goal
-        # at runtime. ADL adds it to the active set and evaluates it every
+        # ADR VALUE: the LangGraph agent can propose a new Goal
+        # at runtime. ADR adds it to the active set and evaluates it every
         # cycle alongside the original goal — no restart, no code change.
         new_goals = []
         if plan.tighter_threshold is not None:
@@ -213,9 +213,9 @@ async def main() -> None:
     op        = SearchOperator(engine)
     op.policy = LangGraphPolicy(op, api_key)
 
-    print("LangGraph + ADL  |  adaptive search")
+    print("LangGraph + ADR  |  adaptive search")
     print(f"  model={MODEL}  target≈{TARGET}  goal: radius < {MIN_RADIUS}")
-    print("  LangGraph decides what to compute  →  ADL executes + checks goals\n")
+    print("  LangGraph decides what to compute  →  ADR executes + checks goals\n")
 
     async for _ in op.run():
         pass

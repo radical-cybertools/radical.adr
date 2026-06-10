@@ -1,9 +1,9 @@
-"""Operator — the central ADL runtime class.
+"""Operator — the central ADR runtime class.
 
 Usage (subclass-based)::
 
-    from radical.adl import Operator, act, Decision
-    from radical.adl.goals import Goal
+    from radical.adr import Operator, act, Decision
+    from radical.adr.goals import Goal
 
     class SearchOperator(Operator):
         center: float = 0.0
@@ -38,17 +38,17 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING, Any, AsyncIterator, Callable
 
-from radical.adl.decision import Action, ActionKind, Decision
-from radical.adl.errors import ActionError, PolicyError
-from radical.adl.message import InboxMessage, MessageKind
-from radical.adl.state import RuntimeState, Snapshot
-from radical.adl.tools import ActionSet
+from radical.adr.decision import Action, ActionKind, Decision
+from radical.adr.errors import ActionError, PolicyError
+from radical.adr.message import InboxMessage, MessageKind
+from radical.adr.state import RuntimeState, Snapshot
+from radical.adr.tools import ActionSet
 
-from radical.adl.goals import Goal
+from radical.adr.goals import Goal
 
 if TYPE_CHECKING:
-    from radical.adl.observer import ObserverBase
-    from radical.adl.policy.base import Policy
+    from radical.adr.observer import ObserverBase
+    from radical.adr.policy.base import Policy
 
 log = logging.getLogger(__name__)
 
@@ -68,7 +68,7 @@ _RESERVED = frozenset({
 # ── Module-level decorators ───────────────────────────────────────────────────
 
 def act(fn: Callable) -> Callable:
-    """Mark a method as an ADL act — the operator's execution primitive.
+    """Mark a method as an ADR act — the operator's execution primitive.
 
     The method runs in the operator's event loop with ``self`` available.
     Return a plain value for local execution, or return an ``asyncio.Future``
@@ -170,7 +170,7 @@ def _deliver_task_event(
 # ── Operator ─────────────────────────────────────────────────────────────────
 
 class Operator:
-    """Agentic runtime operator.
+    """Autonomous runtime operator.
 
     Subclass to define acts, goals, and the adaptive cycle::
 
@@ -461,7 +461,7 @@ class Operator:
                     raise TypeError(
                         f"Operator '{self.operator_id}' ({type(self).__name__}) has no "
                         "@observe method. Every Operator subclass must define one — "
-                        "ADL has no default observation."
+                        "ADR has no default observation."
                     )
                 obs = observe_fn(self, snapshot)
                 if not isinstance(obs, dict):

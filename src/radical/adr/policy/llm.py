@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 
-from radical.adl.policy.base import Policy
+from radical.adr.policy.base import Policy
 
 
 class LLMPolicy(Policy):

@@ -1,4 +1,4 @@
-"""Goal — the only convergence/constraint abstraction in ADL."""
+"""Goal — the only convergence/constraint abstraction in ADR."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from radical.adl.state import Snapshot
+    from radical.adr.state import Snapshot
 
 
 @dataclass

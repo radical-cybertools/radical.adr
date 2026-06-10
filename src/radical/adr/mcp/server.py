@@ -7,7 +7,7 @@ schemas used by LLMPolicy are reused here — no duplication.
 
 Usage::
 
-    from radical.adl.mcp.server import ADLMCPServer
+    from radical.adr.mcp.server import ADLMCPServer
 
     server = ADLMCPServer(operator)
     await server.serve(transport="stdio")
@@ -20,8 +20,8 @@ from typing import TYPE_CHECKING
 from typing import Any
 
 if TYPE_CHECKING:
-    from radical.adl.operator import Operator
-    from radical.adl.tools.registry import ToolRegistry
+    from radical.adr.operator import Operator
+    from radical.adr.tools.registry import ToolRegistry
 
 log = logging.getLogger(__name__)
 
@@ -40,7 +40,7 @@ class ADLMCPServer:
         self,
         operator:  "Operator",
         tools:     "ToolRegistry | None" = None,
-        name:      str                   = "ADL Workflow Operator",
+        name:      str                   = "ADR Workflow Operator",
     ) -> None:
         try:
             from mcp.server.fastmcp import FastMCP
@@ -50,9 +50,9 @@ class ADLMCPServer:
                 "Install it with: pip install radical-adl[mcp]"
             ) from exc
 
-        from radical.adl.message import InboxMessage
-        from radical.adl.message import MessageKind
-        from radical.adl.tools.asyncflow_tools import ASYNCFLOW_TOOLS
+        from radical.adr.message import InboxMessage
+        from radical.adr.message import MessageKind
+        from radical.adr.tools.asyncflow_tools import ASYNCFLOW_TOOLS
 
         self._operator    = operator
         self._tools       = tools or ASYNCFLOW_TOOLS

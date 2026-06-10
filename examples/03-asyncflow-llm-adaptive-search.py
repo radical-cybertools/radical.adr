@@ -3,7 +3,7 @@
 Same adaptive search as example 01, but the policy is an LLMPolicy backed
 by OpenRouter.  Uses `instructor` to parse structured output.
 
-ADL concepts demonstrated
+ADR concepts demonstrated
   - LLMPolicy subclass with @decide — same shape as any other Policy
   - Vendor-agnostic: LLM call is inline in @decide, no hidden hooks
   - op.policy = OpenRouterPolicy(api_key)
@@ -29,8 +29,8 @@ from pydantic import BaseModel, Field
 
 from radical.asyncflow import LocalExecutionBackend, WorkflowEngine
 
-from radical.adl import Decision, LLMPolicy, Operator, decide, goals, observe, act
-from radical.adl.goals import Goal
+from radical.adr import Decision, LLMPolicy, Operator, decide, goals, observe, act
+from radical.adr.goals import Goal
 
 TARGET     = 3.14159
 MIN_RADIUS = 0.005

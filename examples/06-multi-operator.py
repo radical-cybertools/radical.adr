@@ -2,7 +2,7 @@
 
 N operators running concurrently via asyncio.gather, each with its own policy.
 
-ADL concepts demonstrated
+ADR concepts demonstrated
   - N operators via asyncio.gather — no DAG, no coordination
   - Each operator has its own state and @decide policy
   - Operators are isolated: no shared mutable state
@@ -19,8 +19,8 @@ from concurrent.futures import ProcessPoolExecutor
 
 from radical.asyncflow import LocalExecutionBackend, WorkflowEngine
 
-from radical.adl import Decision, Operator, Policy, decide, goals, observe, act
-from radical.adl.goals import Goal
+from radical.adr import Decision, Operator, Policy, decide, goals, observe, act
+from radical.adr.goals import Goal
 
 TARGET     = 3.14159
 MIN_RADIUS = 0.005

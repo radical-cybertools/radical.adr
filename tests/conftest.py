@@ -1,4 +1,4 @@
-"""Shared fixtures for the ADL test suite."""
+"""Shared fixtures for the ADR test suite."""
 
 import pytest
 from concurrent.futures import ProcessPoolExecutor

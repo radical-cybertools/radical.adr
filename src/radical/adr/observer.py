@@ -7,8 +7,8 @@ from typing import Protocol
 from typing import runtime_checkable
 
 if TYPE_CHECKING:
-    from radical.adl.decision import Decision
-    from radical.adl.state import Snapshot
+    from radical.adr.decision import Decision
+    from radical.adr.state import Snapshot
 
 
 @runtime_checkable
