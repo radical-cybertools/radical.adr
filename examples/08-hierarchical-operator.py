@@ -1,19 +1,24 @@
 """08-hierarchical-operator.py
 
-Dynamic parent-child DAG: parent operator sequences two child operators
-through its own observe/decide/act loop.
+Adaptive fan-out across child operators — the parent runs its own
+observe/decide/act loop and spawns a *runtime-determined* set of children,
+each launched relative to what an earlier child discovered.
 
 ADR concepts demonstrated
-  - @act returning a Future from child_op.start() — operator as block
-  - Parent drives child lifecycle: launch A, then B only after A finishes
-  - dep_futures passed through @act to child.start() for native AsyncFlow DAG
-  - SNAPSHOT messaging: children report back to parent each cycle
-  - No external scaffolding — the parent's run() loop drives the entire DAG
+  - add_child(name, OperatorCls, policy=…) — declare a child as first-class
+  - spawn_operator(name, …) — launch a child operator as a block (steering, not
+    scheduling); the runtime count/names/config are all decided live
+  - depends_on=<child names> — gate a launch on upstream children completing,
+    expressed in domain terms (names), never Futures/uids
+  - obs["explorer"].done / obs["explorer"].best_x — observe a child through a
+    live ChildHandle; no runtime machinery (Future, UID, artifacts) in user code
 
-DAG:
-    parent
-     ├── child-a  (starts cycle 0, converges on TARGET=3.14)
-     └── child-b  (starts only after child-a is DONE, converges from opposite side)
+DAG (decided at runtime, not hard-coded):
+    campaign
+     └── explorer                      (broad search; finds a best region)
+          ├── refiner_0  depends_on=explorer   (narrow search around best - Δ)
+          ├── refiner_1  depends_on=explorer   (narrow search around best)
+          └── refiner_2  depends_on=explorer   (narrow search around best + Δ)
 
 Usage:
     python 08-hierarchical-operator.py
@@ -22,17 +27,17 @@ Usage:
 from __future__ import annotations
 
 import asyncio
-import random
 import time
 from concurrent.futures import ProcessPoolExecutor
 
 from radical.asyncflow import LocalExecutionBackend, WorkflowEngine
 
-from radical.adr import Decision, Operator, Policy, decide, goals, observe, act
+from radical.adr import Decision, Operator, Policy, act, decide, goals, observe
 from radical.adr.goals import Goal
 
 TARGET     = 3.14159
-MIN_RADIUS = 0.005
+MIN_RADIUS = 0.02
+K          = 3        # refiners fanned out around the explorer's best region
 
 
 async def evaluate_task(x: float, seed: int = 0) -> dict:
@@ -42,18 +47,18 @@ async def evaluate_task(x: float, seed: int = 0) -> dict:
     return {"x": x, "value": (x - TARGET) ** 2 + rng.gauss(0, 0.03)}
 
 
-# ── Child operator (reused for both children) ────────────────────────────────
+# ── Child operator (reused for explorer + every refiner) ─────────────────────
 
 class SearchOperator(Operator):
 
     center:  float = 0.0
     radius:  float = 5.0
-    history: list  = []
+    best_x:  float = 0.0   # surfaced to the parent via the ChildHandle
 
     @goals
     def convergence_criteria(self):
         return Goal(name="converged", metric="radius",
-                              threshold=MIN_RADIUS, direction="minimize")
+                    threshold=MIN_RADIUS, direction="minimize")
 
     @act
     async def evaluate(self, x: float, seed: int = 0):
@@ -87,104 +92,80 @@ class SearchPolicy(Policy):
                 self._act.update_param("history", obs["history"]),
                 self._act.update_param("center",  new_c),
                 self._act.update_param("radius",  new_r),
+                self._act.update_param("best_x",  new_c),   # report best to parent
                 *[self._act.evaluate(x=new_c + new_r * (2*i/3-1), seed=obs["cycle"]*4+i)
                   for i in range(4)],
             ])
         return Decision(actions=[
             self._act.evaluate(x=obs["center"] + obs["radius"]*(2*i/3-1),
-                                  seed=obs["cycle"]*4+i)
+                               seed=obs["cycle"]*4+i)
             for i in range(4)
         ])
 
 
 # ── Parent operator ───────────────────────────────────────────────────────────
 
-class ParentOperator(Operator):
+class CampaignOperator(Operator):
 
     def __init__(self, engine, operator_id=None, **kwargs):
         super().__init__(engine, operator_id, **kwargs)
-        # Children are instance attributes — accessible via self in @act methods.
-        # parent=self ensures _dispatch sends SNAPSHOT messages to this operator.
-        self.child_a = SearchOperator(engine, "child-a", parent=self)
-        self.child_b = SearchOperator(engine, "child-b", parent=self)
-        self.child_a.policy = SearchPolicy(self.child_a)
-        self.child_b.policy = SearchPolicy(self.child_b)
-        # Child-b starts far from TARGET (slower convergence)
-        self.child_b.center = -8.0
-
-    @act
-    async def launch_child_a(self) -> asyncio.Future:
-        """Start child-a as an AsyncFlow block; returns its block Future."""
-        fut = self.child_a.start()
-        uid = str(getattr(fut, "id", id(fut)))
-        self.state.artifacts["child_start_uid.child-a"] = uid
-        return fut
-
-    @act
-    async def launch_child_b(self, dep_future) -> asyncio.Future:
-        """Start child-b after child-a completes (native AsyncFlow dependency)."""
-        fut = self.child_b.start(dep_future)
-        uid = str(getattr(fut, "id", id(fut)))
-        self.state.artifacts["child_start_uid.child-b"] = uid
-        return fut
+        # The explorer is declared up front; refiners are added adaptively at
+        # runtime (in the policy) once the explorer reports its best region.
+        self.add_child("explorer", SearchOperator, policy=SearchPolicy)
 
     @observe
     def watch(self, snapshot) -> dict:
-        a_uid     = snapshot.artifacts.get("child_start_uid.child-a")
-        b_uid     = snapshot.artifacts.get("child_start_uid.child-b")
-        a_status  = snapshot.runtime.get(a_uid, "NOT_STARTED") if a_uid else "NOT_STARTED"
-        b_status  = snapshot.runtime.get(b_uid, "NOT_STARTED") if b_uid else "NOT_STARTED"
-        # Child objectives (radius, center) arrive via SNAPSHOT messaging each cycle
-        a_radius  = snapshot.observations.get("child:child-a:obj:radius", float("inf"))
-        b_radius  = snapshot.observations.get("child:child-b:obj:radius", float("inf"))
-        return {
-            "child_a_uid":    a_uid,
-            "child_b_uid":    b_uid,
-            "child_a_status": a_status,
-            "child_b_status": b_status,
-            "child_a_radius": a_radius,
-            "child_b_radius": b_radius,
-            "cycle":          snapshot.cycle,
+        obs = {
+            "explorer":   self.child("explorer"),
+            "fanned_out": snapshot.objectives.get("fanned_out", False),
+            "cycle":      snapshot.cycle,
         }
+        for i in range(K):
+            obs[f"refiner_{i}"] = self.child(f"refiner_{i}")
+        return obs
 
 
-class ParentPolicy(Policy):
+class CampaignPolicy(Policy):
 
-    def __init__(self, op: ParentOperator) -> None:
+    def __init__(self, op: CampaignOperator) -> None:
         super().__init__()
         self._act = op.get_actions()
 
     @decide
     async def run(self, obs: dict) -> Decision:
-        # Cycle 0: launch child-a
-        if obs["cycle"] == 0:
-            print(f"  [parent c{obs['cycle']:2d}] launching child-a")
-            return Decision(actions=[self._act.launch_child_a()])
+        explorer = obs["explorer"]
 
-        a_uid    = obs["child_a_uid"]
-        a_status = obs["child_a_status"]
-        b_uid    = obs["child_b_uid"]
-        b_status = obs["child_b_status"]
+        # Cycle 0: launch the explorer (already registered in __init__).
+        if explorer.status == "NOT_STARTED":
+            print(f"  [campaign c{obs['cycle']:2d}] launching explorer")
+            return Decision(actions=[self._act.spawn_operator("explorer")])
 
-        # When child-a is DONE: launch child-b with child-a's Future as dependency
-        if a_status == "DONE" and b_uid is None:
-            print(f"  [parent c{obs['cycle']:2d}] child-a done "
-                  f"(radius={obs['child_a_radius']:.5f}) → launching child-b")
+        # Explorer done → fan out K refiners around its best region. Count, names,
+        # and per-child config are all decided here, at runtime. `fanned_out` is a
+        # user-managed spawn-once guard (a first-class idempotency API is a planned
+        # follow-up).
+        if explorer.done and not obs["fanned_out"]:
+            best = explorer.best_x
+            print(f"  [campaign c{obs['cycle']:2d}] explorer done "
+                  f"(best_x={best:+.4f}) → fanning out {K} refiners")
             return Decision(actions=[
-                self._act.launch_child_b(depends_on=[a_uid])
+                self._act.update_param("fanned_out", True),
+                *[self._act.spawn_operator(
+                      f"refiner_{i}", SearchOperator, policy=SearchPolicy,
+                      depends_on="explorer", center=best + (i - 1) * 0.5)
+                  for i in range(K)],
             ])
 
-        # When child-b is DONE: stop
-        if b_status == "DONE":
-            print(f"  [parent c{obs['cycle']:2d}] child-b done "
-                  f"(radius={obs['child_b_radius']:.5f}) → stopping")
+        # All refiners done → stop.
+        if obs["fanned_out"] and all(obs[f"refiner_{i}"].done for i in range(K)):
+            print(f"  [campaign c{obs['cycle']:2d}] all {K} refiners done → stopping")
             return Decision(stop=True)
 
-        # Idle cycle — waiting for children
-        if obs["cycle"] % 5 == 0:
-            print(f"  [parent c{obs['cycle']:2d}] "
-                  f"child-a={a_status} (r={obs['child_a_radius']:.4f})  "
-                  f"child-b={b_status} (r={obs['child_b_radius']:.4f})")
+        # Idle cycle — waiting on children. Surface their live status periodically.
+        if obs["fanned_out"] and obs["cycle"] % 5 == 0:
+            states = "  ".join(f"refiner_{i}={obs[f'refiner_{i}'].status}"
+                               for i in range(K))
+            print(f"  [campaign c{obs['cycle']:2d}] {states}")
         return Decision()
 
 
@@ -194,21 +175,23 @@ async def main():
     backend = await LocalExecutionBackend(ProcessPoolExecutor(max_workers=8))
     engine  = await WorkflowEngine.create(backend)
 
-    parent        = ParentOperator(engine, "parent")
-    parent.policy = ParentPolicy(parent)
+    campaign        = CampaignOperator(engine, "campaign")
+    campaign.policy = CampaignPolicy(campaign)
 
-    print("DAG of operators: parent → child-a → child-b (sequential)\n")
+    print(f"Adaptive fan-out: explorer → {K} refiners (depends_on=explorer)\n")
     t0 = time.perf_counter()
-    await parent.run_to_completion()
+    await campaign.run_to_completion()
     elapsed = time.perf_counter() - t0
 
-    print(f"\nDone in {elapsed:.2f}s  |  parent cycles={parent.state.cycle}")
-    print(f"  child-a: cycles={parent.child_a.state.cycle}  "
-          f"radius={parent.child_a.radius:.5f}  "
-          f"center={parent.child_a.center:+.5f}")
-    print(f"  child-b: cycles={parent.child_b.state.cycle}  "
-          f"radius={parent.child_b.radius:.5f}  "
-          f"center={parent.child_b.center:+.5f}")
+    explorer = campaign.children["explorer"]
+    print(f"\nDone in {elapsed:.2f}s  |  campaign cycles={campaign.state.cycle}")
+    print(f"  explorer: cycles={explorer.state.cycle}  "
+          f"radius={explorer.radius:.5f}  best_x={explorer.best_x:+.5f}")
+    for i in range(K):
+        refiner = campaign.children.get(f"refiner_{i}")
+        if refiner is not None:
+            print(f"  refiner_{i}: cycles={refiner.state.cycle}  "
+                  f"radius={refiner.radius:.5f}  center={refiner.center:+.5f}")
 
     await engine.shutdown()
 

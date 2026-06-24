@@ -68,6 +68,7 @@ from radical.adr.observer import ObserverBase
 from radical.adr.recording import RecordingObserver
 from radical.adr.recording import replay_trace
 from radical.adr.operator import Operator
+from radical.adr.operator import ChildHandle
 from radical.adr.operator import goals
 from radical.adr.operator import observe
 from radical.adr.operator import act
@@ -82,6 +83,7 @@ from radical.adr.tools import ActionSet
 __all__ = [
     # Operator + decorators
     "Operator",
+    "ChildHandle",
     "act",
     "observe",
     "goals",

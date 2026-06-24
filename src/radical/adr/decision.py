@@ -5,16 +5,17 @@ from __future__ import annotations
 from enum import Enum
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from radical.adr.goals import Goal
 
 
 class ActionKind(str, Enum):
-    SPAWN_TASK   = "spawn_task"
-    CANCEL_TASK  = "cancel_task"
-    SPAWN_BLOCK  = "spawn_block"
-    UPDATE_PARAM = "update_param"
+    SPAWN_TASK     = "spawn_task"
+    CANCEL_TASK    = "cancel_task"
+    SPAWN_BLOCK    = "spawn_block"
+    SPAWN_OPERATOR = "spawn_operator"
+    UPDATE_PARAM   = "update_param"
 
 
 class Action(BaseModel):
@@ -23,6 +24,14 @@ class Action(BaseModel):
     ``task_name`` is a string key into ``Operator.task_registry`` or
     ``Operator.workflow_registry``.  The callable lookup happens at execution
     time inside the operator — never here.
+
+    ``depends_on`` is interpreted by ``kind``: for ``SPAWN_TASK``/``SPAWN_BLOCK``
+    it lists upstream task **uids**; for ``SPAWN_OPERATOR`` it lists upstream
+    child operator **names**.  Either way the resolved Futures gate the launch.
+
+    For ``SPAWN_OPERATOR``: ``task_name`` is the child name, ``task_kwargs`` is
+    the child's construction config, and ``operator_cls`` / ``policy`` carry live
+    Python references (excluded from serialization).
     """
 
     kind:        ActionKind
@@ -32,6 +41,10 @@ class Action(BaseModel):
     depends_on:  list[str]        = []
     param_key:   str | None       = None
     param_value: Any              = None
+    operator_cls: Any = Field(default=None, exclude=True)   # live ref; not serialized
+    policy:       Any = Field(default=None, exclude=True)   # Policy instance OR class/factory
+
+    model_config = {"arbitrary_types_allowed": True}
 
 
 class Decision(BaseModel):

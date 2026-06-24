@@ -191,7 +191,7 @@ class _ParentOp(Operator):
 
     @observe
     def ext(self, snap) -> dict:
-        child_radius = snap.observations.get("child:test-child:obj:radius")
+        child_radius = snap.objectives.get("child:test-child:obj:radius")
         return {
             "child_radius": child_radius,
             "cycle": snap.cycle,

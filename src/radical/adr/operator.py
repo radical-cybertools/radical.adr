@@ -61,7 +61,7 @@ _MISSING       = object()  # sentinel for "no default value"
 # Instance attributes that must NOT be proxied to state.objectives
 _RESERVED = frozenset({
     "operator_id", "engine", "parent", "observer",
-    "state", "inbox", "children",
+    "state", "inbox", "children", "_child_starts",
     "_stop_event", "_adl_actionset", "_policy", "_runtime_goals", "_block_factory",
     "_max_cycles",
 })
@@ -169,6 +169,59 @@ def _deliver_task_event(
     ))
 
 
+# ── Child handle ─────────────────────────────────────────────────────────────
+
+class ChildHandle:
+    """Live, read-only view of a spawned child operator.
+
+    Returned by ``Operator.child(name)``; surfaced to a policy through ``@observe``
+    so decisions read child state by intent — ``obs["explorer"].done``,
+    ``obs["explorer"].radius`` — without touching Futures, uids, or ``child:*`` keys.
+
+    - ``status``  → NOT_STARTED / PENDING / RUNNING / DONE / FAILED
+    - ``done`` / ``failed`` → convenience booleans
+    - any other attribute → the child's reported objective of that name (mirrored
+      into the parent's persistent objectives under ``child:{name}:obj:{metric}`` by
+      the SNAPSHOT merge, so the latest value survives across parent cycles)
+    """
+
+    def __init__(self, parent: "Operator", name: str) -> None:
+        object.__setattr__(self, "_p", parent)
+        object.__setattr__(self, "_n", name)
+
+    @property
+    def status(self) -> str:
+        p = object.__getattribute__(self, "_p")
+        n = object.__getattribute__(self, "_n")
+        uid = p._child_starts.get(n)
+        return p.state.runtime.get(uid, "PENDING") if uid else "NOT_STARTED"
+
+    @property
+    def done(self) -> bool:
+        return self.status == "DONE"
+
+    @property
+    def failed(self) -> bool:
+        return self.status == "FAILED"
+
+    def get(self, metric: str, default: Any = None) -> Any:
+        p = object.__getattribute__(self, "_p")
+        n = object.__getattribute__(self, "_n")
+        return p.state.objectives.get(f"child:{n}:obj:{metric}", default)
+
+    def __getattr__(self, metric: str) -> Any:
+        # Only reached for names that are not real attributes/properties.
+        val = self.get(metric, _MISSING)
+        if val is _MISSING:
+            n = object.__getattribute__(self, "_n")
+            raise AttributeError(f"child '{n}' has no reported metric '{metric}'")
+        return val
+
+    def __repr__(self) -> str:
+        n = object.__getattribute__(self, "_n")
+        return f"ChildHandle({n!r}, status={self.status})"
+
+
 # ── Operator ─────────────────────────────────────────────────────────────────
 
 class Operator:
@@ -258,6 +311,7 @@ class Operator:
         object.__setattr__(self, "state",        RuntimeState(self.operator_id))
         object.__setattr__(self, "inbox",        asyncio.Queue(maxsize=inbox_maxsize))
         object.__setattr__(self, "children",     {})
+        object.__setattr__(self, "_child_starts", {})   # child name → start-future uid
         object.__setattr__(self, "_stop_event",    asyncio.Event())
         object.__setattr__(self, "_block_factory", None)
         object.__setattr__(self, "_max_cycles",    max_cycles)
@@ -403,23 +457,50 @@ class Operator:
 
     # ── Hierarchy ─────────────────────────────────────────────────────────────
 
-    def spawn_child(
+    def add_child(
         self,
-        child_id: str,
-        policy:   "Policy | None" = None,
-        engine:   Any = None,
-        **kwargs: Any,
+        name:     str,
+        operator: "Operator | type[Operator]",
+        *,
+        policy:   Any = None,
+        **config: Any,
     ) -> "Operator":
-        """Create and register a child operator."""
-        child = Operator(
-            engine or self.engine,
-            child_id,
-            policy = policy,
-            parent = self,
-            **kwargs,
-        )
-        self.children[child_id] = child
+        """Register a child operator under ``name`` (auto-wired to this parent).
+
+        ``operator`` may be an ``Operator`` *class* — instantiated as
+        ``operator(self.engine, name, parent=self)`` — or an existing instance,
+        which is re-parented to ``self``.
+
+        ``config`` seeds the child's objectives: each key is assigned on the child
+        after construction (an annotated attribute like ``center`` proxies into
+        ``child.state.objectives``), so a fan-out can vary per-child tuning in one
+        call — ``add_child("refiner_0", SearchOperator, center=3.1)``.
+
+        ``policy`` may be a ``Policy`` instance (attached as-is) or a class/factory
+        called with the child (``child.policy = policy(child)``) — the latter lets a
+        single line provision policies for a homogeneous fan-out of children.
+
+        Returns the child operator. The child is observable via ``self.child(name)``.
+        """
+        if isinstance(operator, type):
+            child = operator(self.engine, name, parent=self)
+        else:
+            child = operator
+            object.__setattr__(child, "parent", self)
+
+        for key, value in config.items():
+            setattr(child, key, value)   # annotated keys proxy into child objectives
+
+        if policy is not None:
+            from radical.adr.policy.base import Policy
+            child.policy = policy if isinstance(policy, Policy) else policy(child)
+
+        self.children[name] = child
         return child
+
+    def child(self, name: str) -> "ChildHandle":
+        """Return a live, read-only :class:`ChildHandle` for a registered child."""
+        return ChildHandle(self, name)
 
     def detach_child(self, child_id: str) -> "Operator | None":
         child = self.children.pop(child_id, None)
@@ -611,12 +692,18 @@ class Operator:
         elif msg.kind == MessageKind.SNAPSHOT:
             snapshot: Snapshot = msg.payload
             child_id = msg.sender_id
+            # A child's observations are per-cycle on the child → mirror them in the
+            # parent's per-cycle observations. Its runtime/objectives are *persistent*
+            # child state → mirror them in the parent's persistent objectives store so
+            # the latest values survive across parent cycles (latest-wins). This keeps
+            # ChildHandle metric reads stable even when the child's final SNAPSHOT and
+            # its block-future DONE event arrive on different parent cycles.
             for k, v in snapshot.observations.items():
                 self.state.observations[f"child:{child_id}:{k}"] = v
             for k, v in snapshot.runtime.items():
-                self.state.observations[f"child:{child_id}:runtime:{k}"] = v
+                self.state.objectives[f"child:{child_id}:runtime:{k}"] = v
             for k, v in snapshot.objectives.items():
-                self.state.observations[f"child:{child_id}:obj:{k}"] = v
+                self.state.objectives[f"child:{child_id}:obj:{k}"] = v
 
     # ── Action application ───────────────────────────────────────────────────
 
@@ -656,6 +743,27 @@ class Operator:
                     )
                     continue
                 self._validate_spawn_params(i, act, fn, problems)
+
+            elif act.kind == ActionKind.SPAWN_OPERATOR:
+                name = act.task_name
+                if not name:
+                    problems.append(f"action[{i}] SPAWN_OPERATOR: task_name (child name) is required")
+                elif name not in self.children and act.operator_cls is None:
+                    problems.append(
+                        f"action[{i}] SPAWN_OPERATOR '{name}': child not registered and no "
+                        "operator_cls provided"
+                    )
+                # depends_on holds child NAMES here; an unknown name may be spawned earlier
+                # in the same batch, so warn (do not raise) rather than block.
+                for dep_name in act.depends_on:
+                    if dep_name not in self.children and dep_name not in self._child_starts:
+                        warnings.warn(
+                            f"Operator '{self.operator_id}': action[{i}] SPAWN_OPERATOR '{name}' "
+                            f"depends_on child '{dep_name}' which is not a known child; "
+                            "the dependency will be dropped if still unknown at apply time.",
+                            UserWarning,
+                            stacklevel=2,
+                        )
 
             elif act.kind == ActionKind.CANCEL_TASK:
                 if act.target_uid is None:
@@ -731,6 +839,16 @@ class Operator:
                     stacklevel=2,
                 )
 
+    def _track_future(self, result: asyncio.Future, name: str, kwargs: dict) -> None:
+        """Register a spawned Future for runtime tracking (shared by tasks and operators)."""
+        uid = str(getattr(result, "id", id(result)))
+        self.state.task_futures[uid] = result
+        self.state.runtime[uid]      = "PENDING"
+        self.state.task_context[uid] = {"name": name, "kwargs": kwargs}
+        result.add_done_callback(
+            lambda fut, _uid=uid: _deliver_task_event(fut, _uid, self.inbox)
+        )
+
     async def _apply_one(self, act: Action) -> None:
         if act.kind in (ActionKind.SPAWN_TASK, ActionKind.SPAWN_BLOCK):
             if act.task_name is None:
@@ -748,13 +866,7 @@ class Operator:
             ]
             result = await fn(self, *dep_futures, **act.task_kwargs)
             if isinstance(result, asyncio.Future):
-                uid = str(getattr(result, "id", id(result)))
-                self.state.task_futures[uid] = result
-                self.state.runtime[uid]      = "PENDING"
-                self.state.task_context[uid] = {"name": act.task_name, "kwargs": act.task_kwargs}
-                result.add_done_callback(
-                    lambda fut, _uid=uid: _deliver_task_event(fut, _uid, self.inbox)
-                )
+                self._track_future(result, act.task_name, act.task_kwargs)
             elif result is not None:
                 # Local result — deliver to inbox so @observe sees it next cycle
                 uid = f"local.{act.task_name}.{id(result)}"
@@ -764,6 +876,10 @@ class Operator:
                     sender_id = "adl.local",
                     payload   = {"uid": uid, "state": "DONE", "result": result},
                 ))
+
+        elif act.kind == ActionKind.SPAWN_OPERATOR:
+            result = await self._spawn_operator(act)
+            self._track_future(result, act.task_name, act.task_kwargs)
 
         elif act.kind == ActionKind.CANCEL_TASK:
             if act.target_uid is None:
@@ -777,6 +893,38 @@ class Operator:
             if act.param_key is None:
                 raise ActionError("UPDATE_PARAM requires param_key")
             self.state.objectives[act.param_key] = act.param_value
+
+    async def _spawn_operator(self, act: Action) -> asyncio.Future:
+        """Launch a child operator as a block, registering it on first use.
+
+        ``act.task_name`` is the child name; ``act.depends_on`` lists upstream child
+        **names** whose start-Futures gate this launch (resolved internally — the
+        policy never handles Futures or uids). Returns the child's block Future.
+        """
+        name = act.task_name
+        if not name:
+            raise ActionError("SPAWN_OPERATOR: task_name (child name) is required")
+
+        child = self.children.get(name)
+        if child is None:
+            if act.operator_cls is None:
+                raise ActionError(
+                    f"SPAWN_OPERATOR '{name}': child is not registered and no "
+                    "operator_cls was provided to spawn_operator(...)"
+                )
+            child = self.add_child(name, act.operator_cls, policy=act.policy,
+                                   **act.task_kwargs)
+
+        dep_futures = []
+        for dep_name in act.depends_on:
+            dep_uid = self._child_starts.get(dep_name)
+            dep_fut = self.state.task_futures.get(dep_uid) if dep_uid else None
+            if dep_fut is not None:
+                dep_futures.append(dep_fut)
+
+        fut = child.start(*dep_futures)
+        self._child_starts[name] = str(getattr(fut, "id", id(fut)))
+        return fut
 
     # ── Dispatch ─────────────────────────────────────────────────────────────
 

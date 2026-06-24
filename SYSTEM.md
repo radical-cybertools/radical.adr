@@ -136,14 +136,7 @@ async def md_refine(self, candidate: str):
     return self.engine.block(_block)(candidate)
 ```
 
-**Operator lifecycle act** (starts a child operator as a block, enables parent-driven DAG):
-```python
-@act
-async def launch_child(self, dep_future=None) -> asyncio.Future:
-    fut = self.child_op.start(dep_future) if dep_future else self.child_op.start()
-    self.state.artifacts["child_uid"] = str(getattr(fut, "id", id(fut)))
-    return fut
-```
+**Child operators** are first-class — you do not write a launch `@act`. Declare a child with `add_child`, launch it from the policy with `acts.spawn_operator(name, …)`, and observe it via `self.child(name)`. `SPAWN_OPERATOR` reuses the same Future-tracking path as `SPAWN_TASK` internally (`child.start(*dep_futs)` wrapped as an `engine.block`), so the `Future`/`UID`/`artifacts` machinery stays out of user code. See §5.3.
 
 Module-level implementations (`_dock_impl`, `_prep`, etc.) are plain async functions — pure, testable, independent of ADR. The `@act` method is the dispatch point; the implementation is separate.
 
@@ -208,10 +201,13 @@ class Decision:
 |------|--------|
 | `SPAWN_TASK` | Look up `@act` in `_adl_act_registry`, `await fn(self, *dep_futures, **kwargs)`, handle return |
 | `SPAWN_BLOCK` | Alias for `SPAWN_TASK` — same lookup and execution path |
+| `SPAWN_OPERATOR` | Register-or-reuse a child operator by name, then launch it as a block (`child.start(*dep_futs)`); track its block Future like any spawned task |
 | `CANCEL_TASK` | `future.cancel()` on tracked future |
 | `UPDATE_PARAM` | `state.objectives[key] = value` |
 
-`depends_on: list[str]` on every `Action` — UIDs of futures in `state.task_futures`. Resolved to live futures before calling the `@act` method, enabling native intra-operator DAG chaining.
+`depends_on: list[str]` on every `Action`, interpreted by `kind`: for `SPAWN_TASK`/`SPAWN_BLOCK` it lists upstream task **UIDs** in `state.task_futures`; for `SPAWN_OPERATOR` it lists upstream child operator **names** (resolved internally via `_child_starts[name] → task_futures[uid]`). Either way the resolved Futures gate the launch — enabling native DAG chaining without the policy ever handling a Future or uid.
+
+For `SPAWN_OPERATOR`, `task_name` is the child **name**, `task_kwargs` is the child's **config** (objective seeds), and `operator_cls` / `policy` carry live Python references that are `exclude=True` (so `model_dump()` stays JSON-safe — a `SPAWN_OPERATOR` decision does not round-trip through record/replay).
 
 ---
 
@@ -227,11 +223,17 @@ acts.cancel_task(uid)                          # CANCEL_TASK
 acts.update_param("radius", 2.5)               # UPDATE_PARAM
 acts.stop()                                    # Decision(stop=True)
 
-# depends_on — resolved to dep_futures before @act is called:
-acts.launch_child_b(depends_on=[child_a_uid])
+# spawn_operator — launch a child operator by name (register-or-reuse):
+acts.spawn_operator("explorer")                            # re-launch a declared child
+acts.spawn_operator("refiner_0", SearchOperator,           # register + launch a new one
+                    policy=SearchPolicy, center=3.1)
+
+# depends_on — task UIDs for SPAWN_TASK, child names for SPAWN_OPERATOR:
+acts.spawn_task("refine", depends_on=[task_uid])           # gate on an upstream task
+acts.spawn_operator("merge", MergeOp, depends_on=["refiner_0", "refiner_1"])
 ```
 
-`depends_on` is a first-class parameter on all spawning methods — it is extracted from kwargs and set on `act.depends_on`, not passed as a task kwarg.
+`depends_on` is a first-class parameter on all spawning methods — it is extracted from kwargs and set on `act.depends_on`, not passed as a task kwarg. `spawn_operator` accepts a single name or a list of names.
 
 LLM schema: `op.get_actions("openai")` / `"anthropic"` / `"langgraph"` — renders all `@act` signatures and docstrings in vendor format.
 
@@ -241,9 +243,9 @@ LLM schema: `op.get_actions("openai")` / `"anthropic"` / `"langgraph"` — rende
 
 | Namespace | Contents | Lifetime |
 |-----------|----------|----------|
-| `observations` | Task results (`result.{uid}`), task errors (`error.{uid}`), child data | Cleared each cycle |
+| `observations` | Task results (`result.{uid}`), task errors (`error.{uid}`), child per-cycle obs (`child:{id}:{k}`) | Cleared each cycle |
 | `runtime` | UID → `PENDING`/`RUNNING`/`DONE`/`FAILED`/`CANCELED` | Persists |
-| `objectives` | Annotated operator attrs, policy params | Persists |
+| `objectives` | Annotated operator attrs, policy params, child runtime/objectives mirror (`child:{id}:runtime:{k}`, `child:{id}:obj:{k}`) | Persists |
 | `artifacts` | Stable identifiers, file paths | Persists |
 | `directives` | Instructions from parent | Cleared each cycle |
 | `task_context` | `uid → {name, kwargs}` for every spawned task | Persists |
@@ -334,10 +336,12 @@ The `@act` method decides execution strategy. `_apply_one` is execution-strategy
   - DONE: `state.observations["result.{uid}"] = result`
   - FAILED: `state.observations["error.{uid}"] = {task_name, message, type}` — structured error visible to `@observe`
 - `DIRECTIVE` → `state.directives`
-- `SNAPSHOT` (child) → three key families:
-  - `state.observations["child:{id}:{k}"]` — child's task results
-  - `state.observations["child:{id}:runtime:{k}"]` — child's task statuses
-  - `state.observations["child:{id}:obj:{k}"]` — child's objectives (radius, center, etc.)
+- `SNAPSHOT` (child) → three key families. A child's *observations* are per-cycle, so they mirror into the parent's per-cycle `observations`; its *runtime* and *objectives* are persistent child state, so they mirror into the parent's **persistent `objectives`** store (latest-wins) — keeping the latest child metrics available across parent cycles, even when a child's final SNAPSHOT and its block-Future `DONE` event land on different parent cycles:
+  - `state.observations["child:{id}:{k}"]` — child's task results (per-cycle)
+  - `state.objectives["child:{id}:runtime:{k}"]` — child's task statuses (persistent)
+  - `state.objectives["child:{id}:obj:{k}"]` — child's objectives (radius, center, etc.; persistent)
+
+  These keys are read for you by `ChildHandle` (`obs["explorer"].radius`) — user code rarely touches them directly.
 
 ### 4.3 Goal Checking
 
@@ -375,43 +379,70 @@ See `examples/07-multi-operator-same-goal.py`.
 
 ### 5.3 Parent-Child Hierarchy — dynamic DAG
 
-The parent drives child lifecycle entirely from its observe/decide/act loop. Children are created with `parent=self` so `_dispatch` sends SNAPSHOT messages upward each cycle.
+The parent drives child lifecycle entirely from its observe/decide/act loop. Child operators are **first-class**: declared with `add_child`, launched with `spawn_operator`, and observed through a live `ChildHandle` — `Future`/`UID`/`artifacts` and `child:*` string keys never appear in user code.
 
 ```python
-class ParentOperator(Operator):
+class CampaignOperator(Operator):
 
     def __init__(self, engine, operator_id=None, **kwargs):
         super().__init__(engine, operator_id, **kwargs)
-        self.child_a = SearchOperator(engine, "child-a", parent=self)
-        self.child_b = SearchOperator(engine, "child-b", parent=self)
-        self.child_a.policy = SearchPolicy(self.child_a)
-        self.child_b.policy = SearchPolicy(self.child_b)
+        # add_child(name, OperatorCls, policy=…, **config) — registers a child,
+        # auto-wires parent=self, attaches a policy (instance OR class/factory
+        # called with the child), and seeds config as the child's objectives.
+        self.add_child("explorer", SearchOperator, policy=SearchPolicy)
 
-    @act
-    async def launch_child_a(self) -> asyncio.Future:
-        fut = self.child_a.start()
-        self.state.artifacts["child_start_uid.child-a"] = str(getattr(fut, "id", id(fut)))
-        return fut
-
-    @act
-    async def launch_child_b(self, dep_future) -> asyncio.Future:
-        fut = self.child_b.start(dep_future)   # B starts when A is DONE
-        self.state.artifacts["child_start_uid.child-b"] = str(getattr(fut, "id", id(fut)))
-        return fut
+    @observe
+    def watch(self, snapshot) -> dict:
+        # self.child(name) → a live ChildHandle (read-only view of the child).
+        return {"explorer": self.child("explorer"), "cycle": snapshot.cycle}
 ```
 
-**Parent observes children** each cycle via SNAPSHOT:
-- `obs["child:child-a:obj:radius"]` — child's objectives
-- `obs["child:child-a:result.uid"]` — child's task results
-- `obs["child:child-a:runtime.uid"]` — child's task statuses
+**Parent observes children** through the `ChildHandle` returned by `self.child(name)`:
+- `obs["explorer"].status` — `NOT_STARTED` / `PENDING` / `RUNNING` / `DONE` / `FAILED`
+- `obs["explorer"].done` / `.failed` — convenience booleans
+- `obs["explorer"].radius` — any reported objective by name (raises `AttributeError` if the child never reported it; `.get("radius", default)` for a soft read)
 
-**Sequencing** is expressed via `depends_on` in the policy:
+**Launch and sequencing** are expressed with `spawn_operator` in the policy — `depends_on` lists upstream child **names** (not uids):
 ```python
-Decision(actions=[acts.launch_child_b(depends_on=[obs["child_a_uid"]])])
-```
-AsyncFlow resolves child-a's block Future before starting child-b's block — no external scaffolding.
+# launch the declared explorer
+Decision(actions=[acts.spawn_operator("explorer")])
 
-**Parent steers children** via `Decision(delegate_to=["child-a"], directives={...})`.
+# gate a child on another child by name — AsyncFlow resolves the upstream
+# block Future before starting this child's block; no external scaffolding:
+Decision(actions=[acts.spawn_operator("merge", MergeOp, depends_on=["explorer"])])
+```
+
+#### Adaptive fan-out
+
+Because names, count, and config are all runtime values, "explorer finds a region → spawn N refiners around it" is expressible in one list-comprehension — no escape hatch, no `start()`/`fut.id` plumbing:
+
+```python
+class CampaignPolicy(Policy):
+    K = 3
+
+    @decide
+    async def run(self, obs):
+        if obs["explorer"].status == "NOT_STARTED":
+            return Decision(actions=[self._act.spawn_operator("explorer")])
+
+        if obs["explorer"].done and not obs["fanned_out"]:   # user-managed spawn-once guard
+            best = obs["explorer"].best_x
+            return Decision(actions=[
+                self._act.update_param("fanned_out", True),
+                *[self._act.spawn_operator(f"refiner_{i}", SearchOperator,
+                                           policy=SearchPolicy, depends_on="explorer",
+                                           center=best + (i - 1) * 0.5)
+                  for i in range(self.K)],
+            ])
+
+        if obs["fanned_out"] and all(obs[f"refiner_{i}"].done for i in range(self.K)):
+            return Decision(stop=True)
+        return Decision()
+```
+
+> Idempotency (spawn-once) is currently a user-managed guard flag (`fanned_out` above); a first-class idempotency API is a planned follow-up.
+
+**Parent steers children** via `Decision(delegate_to=["explorer"], directives={...})`.
 
 See `examples/08-hierarchical-operator.py`.
 
@@ -483,7 +514,7 @@ Module-level functions passed to `engine.function_task` must be importable (pick
 
 ### `start()` and operator blocks
 
-`op.start(*dep_futures)` wraps `run_to_completion()` as an `engine.block` (lazy, cached on first call). The returned block Future integrates the operator into AsyncFlow's native dependency graph — it can be passed as `dep_future` to another `start()` call, producing sequential operator DAGs without external sequencing code.
+`op.start(*dep_futures)` wraps `run_to_completion()` as an `engine.block` (lazy, cached on first call). The returned block Future integrates the operator into AsyncFlow's native dependency graph. This is an **internal mechanic** — `SPAWN_OPERATOR` calls it for you (resolving `depends_on` child names to their start-Futures). User code launches children with `acts.spawn_operator(...)`, not `start()` directly.
 
 ### Feature branch dependency
 
@@ -508,7 +539,7 @@ Requires `feature/enable_block_cancellation` in AsyncFlow:
 | `05-spawn-block.py` | `@act` returning block Future — sequential sub-task orchestration |
 | `06-multi-operator.py` | N independent operators, different goals (Req 1) |
 | `07-multi-operator-same-goal.py` | `run_until_first_satisfied` — concurrent same goal (Req 2) |
-| `08-hierarchical-operator.py` | Parent-child sequential DAG via `start()` + `@act` + `depends_on` (Req 3) |
+| `08-hierarchical-operator.py` | Adaptive fan-out: `add_child` / `spawn_operator` / `ChildHandle` — explorer → N refiners `depends_on` it (Req 3) |
 | `demo/demo_protein_design.py` | 30-candidate campaign: 4-phase goals, `@act` dispatching to `function_task` and `block` |
 | `demo/demo_protein_design_llm.py` | Same campaign steered by LLM via OpenRouter |
 
@@ -530,4 +561,6 @@ Requires `feature/enable_block_cancellation` in AsyncFlow:
 
 **Goals check before act.** `_check_goals` runs after DECIDE but before ACT. The stop cycle's actions still apply.
 
-**SNAPSHOT propagates all child state.** When a child sends a SNAPSHOT to its parent, the parent merges child observations (`child:{id}:{k}`), runtime statuses (`child:{id}:runtime:{k}`), and objectives (`child:{id}:obj:{k}`) — giving the parent full visibility into each child's state each cycle.
+**SNAPSHOT propagates all child state.** When a child sends a SNAPSHOT to its parent, the parent merges child observations (`child:{id}:{k}`, per-cycle), runtime statuses (`child:{id}:runtime:{k}`, persistent), and objectives (`child:{id}:obj:{k}`, persistent) — giving the parent full visibility into each child's state. Persistent families survive across parent cycles (latest-wins) so the latest child metrics stay readable even when a child's final SNAPSHOT and its block-Future `DONE` event land on different cycles.
+
+**Child operators are first-class.** A parent declares children with `add_child(name, OperatorCls, policy=…, **config)`, launches them with the `SPAWN_OPERATOR` action (`acts.spawn_operator(name, …, depends_on=[child_names])`), and observes them through `self.child(name)` → a read-only `ChildHandle` (`.status`/`.done`/`.failed` and metric-by-name). `Future`, `UID`, `artifacts`, and `child:*` string keys are internal — they never appear in policy or operator code. Names, count, config, and dependencies are all runtime values, so adaptive fan-out needs no escape hatch. (`policy=` may be a `Policy` instance or a class/factory called with the child. Spawn-once idempotency is a user-managed guard flag pending a first-class follow-up.)

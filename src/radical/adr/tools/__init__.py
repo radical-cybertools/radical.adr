@@ -59,6 +59,31 @@ class ActionSet:
         return Action(kind=ActionKind.SPAWN_TASK, task_name=name,
                       task_kwargs=kwargs, depends_on=depends_on or [])
 
+    def spawn_operator(
+        self,
+        name:         str,
+        operator_cls: Any = None,
+        *,
+        policy:       Any = None,
+        depends_on:   "str | list[str] | None" = None,
+        **config:     Any,
+    ) -> Action:
+        """Spawn a child operator (registering it on first use) as a block.
+
+        ``operator_cls`` is required the first time a ``name`` is spawned (it is
+        instantiated and parent-wired); on a re-spawn of an already-registered
+        child it may be omitted. ``policy`` provisions the child's decision policy
+        (a ``Policy`` instance, or a class/factory called with the child). ``config``
+        is forwarded as construction kwargs.
+
+        ``depends_on`` lists upstream child **names** whose completion gates this
+        launch — accepts a single name or a list. The name→Future resolution happens
+        internally; the policy never handles Futures or uids.
+        """
+        deps = [depends_on] if isinstance(depends_on, str) else list(depends_on or [])
+        return Action(kind=ActionKind.SPAWN_OPERATOR, task_name=name, depends_on=deps,
+                      operator_cls=operator_cls, policy=policy, task_kwargs=config)
+
     def cancel_task(self, uid: str) -> Action:
         """Cancel a running or pending task by its UID."""
         return Action(kind=ActionKind.CANCEL_TASK, target_uid=uid)
@@ -136,6 +161,8 @@ _BUILTIN_SPECS = [
      [("name", str), ("kwargs", dict)]),
     ("spawn_workflow", "Spawn a registered AsyncFlow workflow block by name.",
      [("name", str), ("kwargs", dict)]),
+    ("spawn_operator", "Spawn a child operator by name; depends_on lists upstream child names.",
+     [("name", str), ("depends_on", list)]),
     ("cancel_task",    "Cancel a running or pending task by its UID.",
      [("uid", str)]),
     ("update_param",   "Write a key-value pair into operator objectives.",
