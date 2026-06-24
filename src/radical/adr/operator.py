@@ -35,7 +35,9 @@ Usage (subclass-based)::
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
+import warnings
 from typing import TYPE_CHECKING, Any, AsyncIterator, Callable
 
 from radical.adr.decision import Action, ActionKind, Decision
@@ -482,7 +484,7 @@ class Operator:
                 self._apply_goal_changes(decision)
 
                 if self.observer is not None:
-                    self.observer.on_cycle(snapshot, decision)
+                    self.observer.on_cycle(snapshot, obs, decision)
 
                 await self._apply_actions(decision.actions)         # 4. ACT
                 await self._dispatch(decision)
@@ -619,6 +621,9 @@ class Operator:
     # ── Action application ───────────────────────────────────────────────────
 
     async def _apply_actions(self, actions: list[Action]) -> None:
+        # Validate the whole batch first, then apply. A single invalid action
+        # aborts the batch before any action in it is applied — no partial state.
+        self._validate_actions(actions)
         for act in actions:
             try:
                 await self._apply_one(act)
@@ -626,6 +631,105 @@ class Operator:
                 raise ActionError(
                     f"Operator '{self.operator_id}': action {act.kind} failed"
                 ) from exc
+
+    def _validate_actions(self, actions: list[Action]) -> None:
+        """Pre-flight check of every action in a Decision.
+
+        Raises a single ``ActionError`` listing *all* problems found, so one bad
+        action can no longer leave earlier actions in the same Decision applied.
+        Unresolvable ``depends_on`` uids warn (not raise) — they may legitimately
+        reference a future on another operator's state.
+        """
+        registry = type(self)._adl_act_registry
+        problems: list[str] = []
+
+        for i, act in enumerate(actions):
+            if act.kind in (ActionKind.SPAWN_TASK, ActionKind.SPAWN_BLOCK):
+                if act.task_name is None:
+                    problems.append(f"action[{i}] {act.kind.value}: task_name is required")
+                    continue
+                fn = registry.get(act.task_name)
+                if fn is None:
+                    problems.append(
+                        f"action[{i}]: unknown task '{act.task_name}'; "
+                        f"registered: {list(registry)}"
+                    )
+                    continue
+                self._validate_spawn_params(i, act, fn, problems)
+
+            elif act.kind == ActionKind.CANCEL_TASK:
+                if act.target_uid is None:
+                    problems.append(f"action[{i}] CANCEL_TASK: target_uid is required")
+                elif act.target_uid not in self.state.task_futures:
+                    problems.append(
+                        f"action[{i}] CANCEL_TASK: unknown uid '{act.target_uid}'"
+                    )
+
+            elif act.kind == ActionKind.UPDATE_PARAM:
+                # param_key only — objectives deliberately accept arbitrary dynamic keys.
+                if act.param_key is None:
+                    problems.append(f"action[{i}] UPDATE_PARAM: param_key is required")
+
+        if problems:
+            raise ActionError(
+                f"Operator '{self.operator_id}': {len(problems)} action problem(s):\n  - "
+                + "\n  - ".join(problems)
+            )
+
+    def _validate_spawn_params(
+        self, i: int, act: Action, fn: Callable, problems: list[str]
+    ) -> None:
+        try:
+            params = [
+                (name, p)
+                for name, p in inspect.signature(fn).parameters.items()
+                if name != "self"
+            ]
+        except (ValueError, TypeError):
+            return   # un-introspectable signature → skip param checks
+
+        has_var_kw = any(p.kind == p.VAR_KEYWORD for _, p in params)
+        named = [
+            (name, p) for name, p in params
+            if p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD, p.KEYWORD_ONLY)
+        ]
+        valid_names = {name for name, _ in named}
+
+        # Unknown kwargs (unless the act takes **kwargs)
+        if not has_var_kw:
+            for k in act.task_kwargs:
+                if k not in valid_names:
+                    problems.append(
+                        f"action[{i}] '{act.task_name}': unknown kwarg '{k}'; "
+                        f"accepts {sorted(valid_names)}"
+                    )
+
+        # Declared depends_on futures fill leading positional params. Use the
+        # declared count (intent), not the resolvable count — an unresolvable dep
+        # is reported once, as a warning below, not doubled as a missing-param error.
+        positional = [
+            name for name, p in named
+            if p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD)
+        ]
+        filled_by_deps = set(positional[:len(act.depends_on)])
+
+        for name, p in named:
+            if p.default is inspect.Parameter.empty and name not in filled_by_deps \
+                    and name not in act.task_kwargs:
+                problems.append(
+                    f"action[{i}] '{act.task_name}': missing required parameter '{name}'"
+                )
+
+        # Unresolvable depends_on → warn, do not raise.
+        for uid in act.depends_on:
+            if uid not in self.state.task_futures:
+                warnings.warn(
+                    f"Operator '{self.operator_id}': action[{i}] '{act.task_name}' "
+                    f"depends_on '{uid}' which is not a known task future on this "
+                    "operator; it will be dropped at apply time.",
+                    UserWarning,
+                    stacklevel=2,
+                )
 
     async def _apply_one(self, act: Action) -> None:
         if act.kind in (ActionKind.SPAWN_TASK, ActionKind.SPAWN_BLOCK):

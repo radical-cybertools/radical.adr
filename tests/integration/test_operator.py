@@ -11,6 +11,7 @@ import asyncio
 import pytest
 
 from radical.adr import Decision, Operator, Policy, decide, goals, observe, act
+from radical.adr.errors import ActionError, PolicyError
 from radical.adr.goals import Goal
 
 
@@ -373,3 +374,106 @@ async def test_failed_task_error_in_observations(engine):
     assert op.error_info.get("task_name") == "failing_act"
     assert op.error_info.get("type") == "ValueError"
     assert "deliberate test failure" in op.error_info.get("message", "")
+
+
+# ── Item 3: observer.on_cycle receives the obs dict ───────────────────────────
+
+class _ObsCaptureOp(Operator):
+    @observe
+    def extract(self, snapshot) -> dict:
+        return {"cycle": snapshot.cycle, "marker": snapshot.cycle * 10}
+
+
+class _ObsCapturePolicy(Policy):
+    @decide
+    async def run(self, obs: dict) -> Decision:
+        if obs["cycle"] >= 2:
+            return Decision(stop=True)
+        return Decision()
+
+
+class _CapturingObserver:
+    def __init__(self) -> None:
+        self.cycles: list = []
+
+    def on_start(self, operator_id, metadata) -> None:
+        pass
+
+    def on_cycle(self, snapshot, obs, decision) -> None:
+        self.cycles.append((snapshot, obs, decision))
+
+    def on_stop(self, final, reason) -> None:
+        pass
+
+
+async def test_observer_on_cycle_receives_obs(engine):
+    obs_rec = _CapturingObserver()
+    op = _ObsCaptureOp(engine, observer=obs_rec)
+    op.policy = _ObsCapturePolicy()
+    await op.run_to_completion()
+
+    assert obs_rec.cycles, "observer never saw a cycle"
+    for snapshot, obs, decision in obs_rec.cycles:
+        assert isinstance(obs, dict)
+        # obs is exactly what @observe returned for that cycle
+        assert obs["cycle"] == snapshot.cycle
+        assert obs["marker"] == snapshot.cycle * 10
+
+
+# ── Item 5: validate-all-then-apply-all prevents partial application ──────────
+
+class _PartialOp(Operator):
+    flag: int = 0
+
+    @act
+    async def real_task(self, x: float) -> dict:
+        return {"x": x}
+
+    @observe
+    def extract(self, snapshot) -> dict:
+        return {"cycle": snapshot.cycle}
+
+
+class _PartialPolicy(Policy):
+    """Emits a valid update_param followed by an invalid spawn (bad task_name)."""
+
+    def __init__(self, op) -> None:
+        super().__init__()
+        self._act = op.get_actions()
+
+    @decide
+    async def run(self, obs: dict) -> Decision:
+        return Decision(actions=[
+            self._act.update_param("flag", 1),       # valid — must NOT be applied
+            self._act.spawn_task("does_not_exist"),  # invalid — aborts the batch
+        ])
+
+
+async def test_invalid_action_prevents_partial_application(engine):
+    op = _PartialOp(engine)
+    op.policy = _PartialPolicy(op)
+    with pytest.raises((ActionError, PolicyError)):
+        await op.run_to_completion()
+    # The valid update_param that preceded the invalid action must NOT have applied.
+    assert op.state.objectives.get("flag", 0) == 0
+
+
+class _ValidBatchPolicy(Policy):
+    def __init__(self, op) -> None:
+        super().__init__()
+        self._act = op.get_actions()
+        self._done = False
+
+    @decide
+    async def run(self, obs: dict) -> Decision:
+        if self._done:
+            return Decision(stop=True)
+        self._done = True
+        return Decision(actions=[self._act.update_param("flag", 7)])
+
+
+async def test_valid_actions_still_apply(engine):
+    op = _PartialOp(engine)
+    op.policy = _ValidBatchPolicy(op)
+    await op.run_to_completion()
+    assert op.state.objectives.get("flag") == 7

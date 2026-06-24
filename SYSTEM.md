@@ -164,7 +164,9 @@ class SearchPolicy(Policy):
         ...
 ```
 
-`@decide` is mandatory — an empty `Policy` with no composition raises `PolicyError` on first call. Composition: `Policy(primary=LLMPolicy(), fallback=RulePolicy())`.
+`@decide` is mandatory — an empty `Policy` with no composition raises `PolicyError` on first call. Composition: `Policy(primary=LLMPolicy(), fallback=RulePolicy(), timeout=30.0)`. When `timeout` is set, a primary call that hangs longer than `timeout` seconds triggers the fallback (alongside the existing raise / `None` triggers).
+
+**`LLMPolicy` helpers.** `LLMPolicy` is a thin `Policy` subclass providing `render_observation(obs)` (default: JSON dump of the obs dict for the user turn) and `record_usage(tokens=, latency=, cost=)`, which appends one entry to a bounded `usage_history` deque (maxlen 256). Usage tracking is purely local bookkeeping — call `record_usage` manually after your vendor call inside `@decide`. It never flows through `state`, `snapshot`, or `@observe`; ADR grows no telemetry pipeline.
 
 ---
 
@@ -417,7 +419,18 @@ See `examples/08-hierarchical-operator.py`.
 
 ## 6. Observer and Replay
 
-`ObserverBase` defines `on_start`, `on_cycle`, `on_stop`. `JsonlObserver` emits one JSON line per event:
+`ObserverBase` defines three synchronous lifecycle hooks. `on_cycle` receives both the
+`Snapshot` and the `obs` dict the policy actually reasoned over that cycle, plus the resulting
+`Decision`:
+
+```python
+class ObserverBase(Protocol):
+    def on_start(self, operator_id: str, metadata: dict) -> None: ...
+    def on_cycle(self, snapshot: Snapshot, obs: dict, decision: Decision) -> None: ...
+    def on_stop(self, final: Snapshot | None, reason: str) -> None: ...
+```
+
+`JsonlObserver` emits one JSON line per event:
 
 | Event | When |
 |-------|------|
@@ -428,6 +441,27 @@ See `examples/08-hierarchical-operator.py`.
 | `operator_stop` | After final cycle |
 
 HTML replay dashboards: `demo-visualization.html` (force-directed) and `demo-visualization-timeline.html` (Gantt).
+
+### Record / replay for offline policy evaluation
+
+`RecordingObserver` captures the raw per-cycle `obs` dict to a JSONL trace during a live run.
+`replay_trace` then re-drives a *different* policy against that exact recorded `obs` sequence —
+fully offline (no engine, no Operator, no task dispatch) — so policies can be A/B compared on
+identical conditions without re-running the campaign.
+
+```python
+from radical.adr import RecordingObserver, replay_trace
+
+# 1. live run — record the observation trace
+op = MyOperator(engine, observer=RecordingObserver("trace.jsonl"))
+await op.run_to_completion()
+
+# 2. offline — replay against a different policy
+decisions = await replay_trace("trace.jsonl", CandidatePolicy())
+```
+
+`replay_trace` reads only the recorded `obs` (the recorded `decision` is for inspection).
+See `examples/11-record-replay.py`.
 
 ---
 

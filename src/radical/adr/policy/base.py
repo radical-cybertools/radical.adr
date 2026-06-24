@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import TYPE_CHECKING, Any, Callable
 
@@ -52,10 +53,13 @@ class Policy:
         op.policy = Policy(
             primary  = MyLLMPolicy(),
             fallback = MyRulePolicy(),
+            timeout  = 30.0,
         )
 
     When used as composition, ``decide()`` tries ``primary`` first.
-    If it raises or returns ``None``, ``fallback`` is tried.
+    If it raises, returns ``None``, or (when ``timeout`` is set) takes longer
+    than ``timeout`` seconds, ``fallback`` is tried. A hung primary call no
+    longer blocks the decision loop forever.
     """
 
     _adl_decide_fn: Callable | None = None
@@ -72,9 +76,11 @@ class Policy:
         *,
         primary:  "Policy | None" = None,
         fallback: "Policy | None" = None,
+        timeout:  float | None    = None,
     ) -> None:
         self._primary  = primary
         self._fallback = fallback
+        self._timeout  = timeout
 
     async def decide(self, obs: dict) -> Decision:
         # Dispatch to @decide method if the subclass defines one
@@ -91,9 +97,19 @@ class Policy:
         # Composition: try primary, then fallback
         if self._primary is not None:
             try:
-                result = await self._primary.decide(obs)
+                if self._timeout is not None:
+                    result = await asyncio.wait_for(
+                        self._primary.decide(obs), timeout=self._timeout
+                    )
+                else:
+                    result = await self._primary.decide(obs)
                 if result is not None:
                     return result
+            except asyncio.TimeoutError:
+                log.warning(
+                    "Policy: primary timed out after %.1fs; trying fallback",
+                    self._timeout,
+                )
             except Exception:
                 log.exception("Policy: primary raised; trying fallback")
         if self._fallback is not None:

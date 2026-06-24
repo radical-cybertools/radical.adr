@@ -140,6 +140,16 @@ This supports genuinely multi-objective HPC scientific workflows. A protein desi
 
 Any combination of goals from any mix of sources (static, LLM-proposed, or runtime-updated) is supported. The operator does not stop until all of them are satisfied.
 
+**Example — hits AND budget AND deadline:**
+
+```python
+Goal(name="hits_found",   metric="n_hits",        threshold=5,    direction="maximize")
+Goal(name="under_budget", metric="compute_hours", threshold=200,  direction="minimize")
+Goal(name="cpu_healthy",  metric="cpu_percent",   threshold=90.0, direction="minimize")
+```
+
+All three must be satisfied simultaneously — there is no special multi-objective API, just more entries in the list returned by `@goals`. See `examples/10-resource-aware-search.py` for a working two-goal (scientific + resource) version of this pattern.
+
 ### Swappable Policy Without Touching the Workflow
 
 Because the policy is a separate object assigned to the operator, the same HPC scientific workflow can be steered by:

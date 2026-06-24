@@ -14,8 +14,12 @@ if TYPE_CHECKING:
 class Goal:
     """Satisfied when ``obs[metric]`` crosses the threshold.
 
-    direction="minimize" → satisfied when obs[metric] < threshold
-    direction="maximize" → satisfied when obs[metric] > threshold
+    direction="minimize" → satisfied when obs[metric] <  threshold
+    direction="maximize" → satisfied when obs[metric] >  threshold
+
+    ``inclusive=True`` flips the comparison to ``<=`` / ``>=`` so a discrete
+    goal like "reach 5 hits" fires at exactly 5 instead of requiring 6. The
+    default ``inclusive=False`` preserves the strict-inequality behavior exactly.
 
     Metric lookup order:
       1. ``obs[metric]``                 — primary: what @observe explicitly returns
@@ -33,6 +37,7 @@ class Goal:
     metric:     str
     threshold:  float
     direction:  str  = "minimize"
+    inclusive:  bool = False
     _warn_once: bool = field(default=True, init=False, repr=False, compare=False)
 
     def satisfied(self, obs: dict[str, Any], snapshot: "Snapshot") -> bool:
@@ -51,5 +56,5 @@ class Goal:
                 self._warn_once = False
             return False
         if self.direction == "minimize":
-            return float(val) < self.threshold
-        return float(val) > self.threshold
+            return float(val) <= self.threshold if self.inclusive else float(val) < self.threshold
+        return float(val) >= self.threshold if self.inclusive else float(val) > self.threshold

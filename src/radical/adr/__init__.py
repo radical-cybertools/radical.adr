@@ -65,6 +65,8 @@ from radical.adr.message import InboxMessage
 from radical.adr.message import MessageBus
 from radical.adr.message import MessageKind
 from radical.adr.observer import ObserverBase
+from radical.adr.recording import RecordingObserver
+from radical.adr.recording import replay_trace
 from radical.adr.operator import Operator
 from radical.adr.operator import goals
 from radical.adr.operator import observe
@@ -105,6 +107,8 @@ __all__ = [
     "ActionSet",
     # Observers
     "ObserverBase",
+    "RecordingObserver",
+    "replay_trace",
     # Errors
     "ADLError",
     "PolicyError",

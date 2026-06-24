@@ -92,3 +92,27 @@ def test_goal_runtime_not_checked_automatically():
     assert result is False
 
 
+# ── inclusive boundary semantics (Item 2) ───────────────────────────────────────
+
+def test_goal_inclusive_minimize_at_boundary():
+    # inclusive=True minimize fires at exactly the threshold
+    assert Goal("g", "val", 10.0, inclusive=True).satisfied({"val": 10.0}, _snap()) is True
+
+
+def test_goal_inclusive_maximize_at_boundary():
+    # inclusive=True maximize fires at exactly the threshold ("reach 5 hits")
+    g = Goal("g", "n_hits", 5.0, direction="maximize", inclusive=True)
+    assert g.satisfied({"n_hits": 5.0}, _snap()) is True
+
+
+def test_goal_exclusive_minimize_at_boundary_unchanged():
+    # Critical regression: default (exclusive) minimize still strict at the boundary
+    assert Goal("g", "val", 10.0).satisfied({"val": 10.0}, _snap()) is False
+
+
+def test_goal_exclusive_maximize_at_boundary_unchanged():
+    # Critical regression: default (exclusive) maximize still strict at the boundary
+    g = Goal("g", "n_hits", 5.0, direction="maximize")
+    assert g.satisfied({"n_hits": 5.0}, _snap()) is False
+
+
