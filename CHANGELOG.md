@@ -9,7 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Six validated gaps from downstream (Campaign Manager) integration feedback, each
 assessed against source and landed as small, additive changes, plus first-class child
-operators (`SPAWN_OPERATOR` / `add_child` / `ChildHandle`). Full suite: 74 passing.
+operators (`SPAWN_OPERATOR` / `add_child` / `ChildHandle`) with declarative,
+runtime-owned lifecycle verbs (idempotent `spawn_operator`, `restart_operator`,
+`cancel_operator`). Full suite: 91 passing.
 
 ### Added
 
@@ -24,8 +26,17 @@ operators (`SPAWN_OPERATOR` / `add_child` / `ChildHandle`). Full suite: 74 passi
   `obs["explorer"].radius`). `Future`/`UID`/`artifacts`/`child:*` string keys no longer
   appear in user-facing operator or policy code. `depends_on` is shared across action
   kinds — task **uids** for `SPAWN_TASK`, child **names** for `SPAWN_OPERATOR`. See the
-  rewritten `examples/08-hierarchical-operator.py` (adaptive fan-out). Spawn-once
-  idempotency remains a user-managed guard flag pending a first-class follow-up.
+  rewritten `examples/08-hierarchical-operator.py` (adaptive fan-out).
+- **Declarative operator-lifecycle verbs** — child lifecycle is now runtime-owned, with
+  no user-managed spawn-once flag. `acts.spawn_operator(...)` is **idempotent**: once a
+  child has ever been started (including terminal `DONE`/`FAILED`/`CANCELED`), a re-emit
+  is a no-op + a logged warning — replacing the silent "N overlapping runs" bug an
+  unguarded re-emit used to cause. New `acts.restart_operator(name, depends_on=…)` re-runs
+  a registered child from its **initial** config (cancel in-flight → reset → relaunch), and
+  `acts.cancel_operator(name)` cancels a child's block Future, leaving a `CANCELED`
+  tombstone. New `ChildHandle.started` (`status != "NOT_STARTED"`) is the status gate
+  policies use instead of a boolean flag — `if not child.started: spawn`. `ActionKind` is
+  now 7 (`RESTART_OPERATOR`, `CANCEL_OPERATOR` added).
 - **Record / replay** — new `RecordingObserver` and `replay_trace()` (in
   `radical.adr.recording`, exported from the package root) to record a live run's
   per-cycle observation stream to JSONL and replay it offline — no engine, no tasks —
@@ -48,6 +59,9 @@ operators (`SPAWN_OPERATOR` / `add_child` / `ChildHandle`). Full suite: 74 passi
   *before* any are applied (validate-all-then-apply-all). A single invalid action
   raises one `ActionError` listing every problem and aborts the batch, so an invalid
   action can no longer leave earlier actions in the same `Decision` partially applied.
+- **`examples/08-hierarchical-operator.py` is now status-gated** — the `fanned_out`
+  spawn-once guard flag is gone; the campaign policy gates fan-out on the children's own
+  observed `ChildHandle.started`, relying on idempotent `spawn_operator`.
 - **Docs** — `ADR.md` gains a multi-goal AND-convergence example; `SYSTEM.md` documents
   the 3-arg `on_cycle` protocol, the record/replay workflow, and the `timeout` /
   `LLMPolicy` helpers.

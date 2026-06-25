@@ -1,0 +1,70 @@
+---
+title: "API · Decision & Actions"
+description: "Decision, Action, ActionKind, and the ActionSet builder."
+---
+
+Imported from `radical.adr`. See [Decisions & Actions](/concepts/decisions-and-actions) for the
+overview.
+
+## `Decision`
+
+What a policy returns each cycle.
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `actions` | `list[Action]` | `[]` | Actions to apply this cycle. |
+| `goals` | `list[Goal]` | `[]` | Runtime goals to add/upsert. |
+| `remove_goals` | `list[str]` | `[]` | Runtime goal names to remove. |
+| `stop` | `bool` | `False` | Stop the operator after this cycle. |
+| `delegate_to` | `list[str]` | `[]` | Child ids to send a `DIRECTIVE`. |
+| `notify` | `list[tuple[str, Any]]` | `[]` | `(child_id, payload)` notifications. |
+| `directives` | `dict[str, Any]` | `{}` | Payload for `delegate_to`. |
+
+## `ActionKind`
+
+| Kind | Effect |
+|---|---|
+| `SPAWN_TASK` | Look up `@act`, `await fn(self, *deps, **kwargs)`, route the return. |
+| `SPAWN_BLOCK` | Alias for `SPAWN_TASK`. |
+| `SPAWN_OPERATOR` | Register-or-reuse a child by name, launch as a block. Idempotent (no-op + warning if started). |
+| `RESTART_OPERATOR` | Cancel in-flight → reset to initial config → relaunch. Not idempotent. |
+| `CANCEL_OPERATOR` | `future.cancel()` the child block; leaves a `CANCELED` tombstone. |
+| `CANCEL_TASK` | `future.cancel()` on a tracked task future. |
+| `UPDATE_PARAM` | `state.objectives[key] = value`. |
+
+## `Action`
+
+Built via the `ActionSet`, not by hand. Key fields:
+
+| Field | Meaning |
+|---|---|
+| `kind` | An `ActionKind`. |
+| `task_name` | `@act` name, or child name for operator kinds. |
+| `task_kwargs` | kwargs passed to the act / child config. |
+| `depends_on` | `list[str]` — task **UIDs** (`SPAWN_TASK`) or child **names** (`SPAWN_OPERATOR`/`RESTART_OPERATOR`). |
+| `operator_cls` / `policy` | Live references for `SPAWN_OPERATOR` (`exclude=True`, not serialized). |
+
+## `ActionSet`
+
+Returned by `op.get_actions()`. One callable per `@act`, plus built-in verbs.
+
+| Call | Produces |
+|---|---|
+| `acts.<act_name>(**kwargs)` | `SPAWN_TASK` for that `@act`. |
+| `acts.spawn_task(name, depends_on=None, **kwargs)` | `SPAWN_TASK`. |
+| `acts.spawn_workflow(name, depends_on=None, **kwargs)` | `SPAWN_TASK` (alias). |
+| `acts.spawn_operator(name, OperatorCls=None, *, policy=None, depends_on=None, **config)` | `SPAWN_OPERATOR`. |
+| `acts.restart_operator(name, *, depends_on=None)` | `RESTART_OPERATOR`. |
+| `acts.cancel_operator(name)` | `CANCEL_OPERATOR`. |
+| `acts.cancel_task(uid)` | `CANCEL_TASK`. |
+| `acts.update_param(key, value)` | `UPDATE_PARAM`. |
+| `acts.stop()` | `Decision(stop=True)`. |
+| `acts.get_schema(format="openai")` | Vendor tool schemas. |
+
+`depends_on` is extracted from kwargs and set on `act.depends_on`. `spawn_operator` /
+`restart_operator` accept a single name or a list.
+
+## See also
+
+- [api-operator](/reference/api-operator) — `@act` and `ChildHandle` ·
+  [errors](/reference/errors) — `ActionError`

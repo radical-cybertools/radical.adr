@@ -1,0 +1,88 @@
+---
+title: "API · State, Messaging & Observers"
+description: "RuntimeState, Snapshot, message types, and the observer/recording API."
+---
+
+Imported from `radical.adr`. See [State & Snapshots](/concepts/state-and-snapshots) and
+[Record & replay](/guides/record-and-replay) for the overviews.
+
+## `Snapshot`
+
+A frozen Pydantic model handed to `@observe` each cycle. Safe to log, serialize, or pass across
+coroutines.
+
+| Field | Lifetime | Contents |
+|---|---|---|
+| `observations` | cleared each cycle | `result.{uid}`, `error.{uid}`, `child:{id}:{k}` |
+| `runtime` | persists | `uid → PENDING/RUNNING/DONE/FAILED/CANCELED` |
+| `objectives` | persists | annotated attrs, policy params, mirrored child state |
+| `artifacts` | persists | stable ids, file paths |
+| `directives` | cleared each cycle | instructions from a parent |
+| `task_context` | persists | `uid → {name, kwargs}` |
+| `cycle` | — | current cycle index |
+
+**Task error shape** — `observations["error.{uid}"]` is `{"task_name": str, "message": str, "type": str}`.
+
+## `RuntimeState`
+
+The mutable backing store the operator owns. `Snapshot` is its frozen view. Live references not in
+the snapshot: `task_futures: dict[str, Future]` and `history: deque[Snapshot]` (maxlen 64). User
+code reads state through `Snapshot` and writes it through attribute assignment or `UPDATE_PARAM` —
+not directly.
+
+## Messaging
+
+The inbox (`asyncio.Queue`) is the only input channel.
+
+### `MessageKind`
+
+| Kind | Direction | Payload |
+|---|---|---|
+| `TASK_EVENT` | backend/local → operator | `{uid, state, result/error}` |
+| `SNAPSHOT` | child → parent | child `Snapshot` |
+| `DIRECTIVE` | parent → child | `{directives: dict}` |
+| `CUSTOM` | parent / MCP → operator | arbitrary mutation |
+| `STOP` | system → operator | `None` |
+
+### `InboxMessage`
+
+The envelope placed on the inbox: `kind` (`MessageKind`), `sender_id`, `payload`.
+
+### `MessageBus`
+
+Routing helper for inter-operator messaging.
+
+## Observers
+
+### `ObserverBase`
+
+Protocol with three synchronous hooks:
+
+```python
+def on_start(self, operator_id: str, metadata: dict) -> None: ...
+def on_cycle(self, snapshot: Snapshot, obs: dict, decision: Decision) -> None: ...
+def on_stop(self, final: Snapshot | None, reason: str) -> None: ...
+```
+
+Attach via `Operator(..., observer=...)`. Observers are a side channel — they never feed back into
+state. See [Logging & observability](/guides/logging-and-observability).
+
+### `RecordingObserver`
+
+```python
+RecordingObserver(path)   # captures per-cycle obs (+ decision) to JSONL
+```
+
+### `replay_trace`
+
+```python
+decisions = await replay_trace(path, candidate_policy)
+```
+
+Re-drives a different policy against a recorded `obs` sequence — offline, open-loop (reads only the
+recorded `obs`). See [Record & replay](/guides/record-and-replay).
+
+## See also
+
+- [api-operator](/reference/api-operator) · [errors](/reference/errors) ·
+  [design-invariants](/reference/design-invariants)

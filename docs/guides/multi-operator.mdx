@@ -1,0 +1,80 @@
+---
+title: "Multiple Operators"
+description: "Run independent operators concurrently, or race them to the same goal."
+---
+
+Not every multi-operator setup needs a parent. When operators are **peers** — no hierarchy, no
+shared state — you run them with plain `asyncio`. Two patterns cover most cases: fully independent
+operators, and operators racing to satisfy the same goal.
+
+## Independent operators — different goals
+
+N operators, each with its own state, policy, tasks, and goals, run concurrently via
+`asyncio.gather`. There is no DAG and no coordination — they are isolated.
+
+```python
+async def main():
+    backend = await LocalExecutionBackend(ProcessPoolExecutor())
+    engine  = await WorkflowEngine.create(backend)
+
+    ops = [SearchOperator(engine, operator_id=f"op_{i}") for i in range(3)]
+    for op in ops:
+        op.policy = SearchPolicy(op)
+
+    await asyncio.gather(*(op.run_to_completion() for op in ops))
+    await engine.shutdown()
+```
+
+**Runnable example:** [`examples/06-multi-operator.py`](https://github.com/radical-cybertools/radical.adr/blob/main/examples/06-multi-operator.py)
+
+```bash
+python examples/06-multi-operator.py
+```
+
+## Racing operators — same goal, first wins
+
+When several operators chase the *same* convergence goal, the first to satisfy it should cancel the
+rest. This is pure `asyncio` — no new ADR primitives — via a done-callback:
+
+```python
+async def run_until_first_satisfied(*operators):
+    tasks = [asyncio.create_task(_consume(op)) for op in operators]
+
+    def _on_any_done(_t):
+        for other in tasks:
+            if not other.done():
+                other.cancel()
+
+    for t in tasks:
+        t.add_done_callback(_on_any_done)
+    await asyncio.gather(*tasks, return_exceptions=True)
+```
+
+The winner's `run()` finishes naturally; each loser's `run_to_completion` task is cancelled, and the
+cancellation propagates to its in-flight AsyncFlow futures through `run()`'s `finally` block — clean
+shutdown, no shared state.
+
+**Runnable example:** [`examples/07-multi-operator-same-goal.py`](https://github.com/radical-cybertools/radical.adr/blob/main/examples/07-multi-operator-same-goal.py)
+
+```bash
+python examples/07-multi-operator-same-goal.py
+```
+
+## Peers vs parent-child
+
+| Use peers (this guide) when… | Use [hierarchy](/guides/hierarchical-operators) when… |
+|---|---|
+| Operators are independent or merely race | One operator must *decide* about the others |
+| Coordination is "all done" or "first done" | Counts/config are computed at runtime (fan-out) |
+| You want plain `asyncio.gather` | You want to observe children via `ChildHandle` |
+
+## Next
+
+<CardGroup cols={2}>
+  <Card title="Hierarchical operators" icon="sitemap" href="/guides/hierarchical-operators">
+    A parent that spawns and steers children.
+  </Card>
+  <Card title="Goals & convergence" icon="bullseye" href="/guides/goals-and-convergence">
+    The shared goal the racers chase.
+  </Card>
+</CardGroup>

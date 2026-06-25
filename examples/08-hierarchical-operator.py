@@ -10,8 +10,12 @@ ADR concepts demonstrated
     scheduling); the runtime count/names/config are all decided live
   - depends_on=<child names> — gate a launch on upstream children completing,
     expressed in domain terms (names), never Futures/uids
-  - obs["explorer"].done / obs["explorer"].best_x — observe a child through a
-    live ChildHandle; no runtime machinery (Future, UID, artifacts) in user code
+  - obs["explorer"].done / obs["explorer"].started / obs["explorer"].best_x —
+    observe a child through a live ChildHandle; no runtime machinery (Future, UID,
+    artifacts) in user code
+  - spawn_operator is idempotent: the policy gates on .started, so re-emitting it
+    is a runtime-owned no-op — no user-managed spawn-once flag. (restart_operator /
+    cancel_operator are the verbs for re-running / stopping a child.)
 
 DAG (decided at runtime, not hard-coded):
     campaign
@@ -116,9 +120,8 @@ class CampaignOperator(Operator):
     @observe
     def watch(self, snapshot) -> dict:
         obs = {
-            "explorer":   self.child("explorer"),
-            "fanned_out": snapshot.objectives.get("fanned_out", False),
-            "cycle":      snapshot.cycle,
+            "explorer": self.child("explorer"),
+            "cycle":    snapshot.cycle,
         }
         for i in range(K):
             obs[f"refiner_{i}"] = self.child(f"refiner_{i}")
@@ -135,34 +138,34 @@ class CampaignPolicy(Policy):
     async def run(self, obs: dict) -> Decision:
         explorer = obs["explorer"]
 
-        # Cycle 0: launch the explorer (already registered in __init__).
-        if explorer.status == "NOT_STARTED":
+        # Launch the explorer (already registered in __init__). spawn_operator is
+        # idempotent — gating on `.started` means we emit it exactly once; the
+        # runtime would no-op a re-emit, so no spawn-once flag is needed.
+        if not explorer.started:
             print(f"  [campaign c{obs['cycle']:2d}] launching explorer")
             return Decision(actions=[self._act.spawn_operator("explorer")])
 
         # Explorer done → fan out K refiners around its best region. Count, names,
-        # and per-child config are all decided here, at runtime. `fanned_out` is a
-        # user-managed spawn-once guard (a first-class idempotency API is a planned
-        # follow-up).
-        if explorer.done and not obs["fanned_out"]:
+        # and per-child config are all decided here, at runtime. Gate on the
+        # refiners' own observed status (`.started`) — no user-managed guard.
+        if explorer.done and not obs["refiner_0"].started:
             best = explorer.best_x
             print(f"  [campaign c{obs['cycle']:2d}] explorer done "
                   f"(best_x={best:+.4f}) → fanning out {K} refiners")
             return Decision(actions=[
-                self._act.update_param("fanned_out", True),
-                *[self._act.spawn_operator(
-                      f"refiner_{i}", SearchOperator, policy=SearchPolicy,
-                      depends_on="explorer", center=best + (i - 1) * 0.5)
-                  for i in range(K)],
+                self._act.spawn_operator(
+                    f"refiner_{i}", SearchOperator, policy=SearchPolicy,
+                    depends_on="explorer", center=best + (i - 1) * 0.5)
+                for i in range(K)
             ])
 
         # All refiners done → stop.
-        if obs["fanned_out"] and all(obs[f"refiner_{i}"].done for i in range(K)):
+        if obs["refiner_0"].started and all(obs[f"refiner_{i}"].done for i in range(K)):
             print(f"  [campaign c{obs['cycle']:2d}] all {K} refiners done → stopping")
             return Decision(stop=True)
 
         # Idle cycle — waiting on children. Surface their live status periodically.
-        if obs["fanned_out"] and obs["cycle"] % 5 == 0:
+        if obs["refiner_0"].started and obs["cycle"] % 5 == 0:
             states = "  ".join(f"refiner_{i}={obs[f'refiner_{i}'].status}"
                                for i in range(K))
             print(f"  [campaign c{obs['cycle']:2d}] {states}")

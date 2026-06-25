@@ -61,7 +61,7 @@ _MISSING       = object()  # sentinel for "no default value"
 # Instance attributes that must NOT be proxied to state.objectives
 _RESERVED = frozenset({
     "operator_id", "engine", "parent", "observer",
-    "state", "inbox", "children", "_child_starts",
+    "state", "inbox", "children", "_child_starts", "_child_config",
     "_stop_event", "_adl_actionset", "_policy", "_runtime_goals", "_block_factory",
     "_max_cycles",
 })
@@ -197,6 +197,17 @@ class ChildHandle:
         return p.state.runtime.get(uid, "PENDING") if uid else "NOT_STARTED"
 
     @property
+    def started(self) -> bool:
+        """True once the child has ever been launched (incl. terminal states).
+
+        The clean status gate for fan-out policies: ``if not child.started: spawn``
+        replaces a user-managed spawn-once flag.  Idempotent ``spawn_operator``
+        keys off the same fact, so a policy that gates on ``started`` never hits the
+        no-op warning path.
+        """
+        return self.status != "NOT_STARTED"
+
+    @property
     def done(self) -> bool:
         return self.status == "DONE"
 
@@ -312,6 +323,7 @@ class Operator:
         object.__setattr__(self, "inbox",        asyncio.Queue(maxsize=inbox_maxsize))
         object.__setattr__(self, "children",     {})
         object.__setattr__(self, "_child_starts", {})   # child name → start-future uid
+        object.__setattr__(self, "_child_config", {})   # child name → initial config (restart)
         object.__setattr__(self, "_stop_event",    asyncio.Event())
         object.__setattr__(self, "_block_factory", None)
         object.__setattr__(self, "_max_cycles",    max_cycles)
@@ -319,16 +331,23 @@ class Operator:
         object.__setattr__(self, "_policy",        policy)
         object.__setattr__(self, "_runtime_goals", [])
 
-        # Seed state.objectives from class-level annotated defaults
+        self._seed_default_objectives()
+
+        # Build ActionSet
+        object.__setattr__(self, "_adl_actionset", ActionSet(self))
+
+    def _seed_default_objectives(self) -> None:
+        """Seed state.objectives from class-level annotated defaults.
+
+        Called at construction and again from the restart reset path, so a
+        restarted child starts from the same declared baseline.
+        """
         for key in type(self)._adl_state_keys:
             for klass in type(self).__mro__:
                 raw = vars(klass).get(key, _MISSING)
                 if raw is not _MISSING and not callable(raw):
                     self.state.objectives[key] = raw
                     break
-
-        # Build ActionSet
-        object.__setattr__(self, "_adl_actionset", ActionSet(self))
 
     # ── State proxy ───────────────────────────────────────────────────────────
 
@@ -496,6 +515,7 @@ class Operator:
             child.policy = policy if isinstance(policy, Policy) else policy(child)
 
         self.children[name] = child
+        self._child_config[name] = dict(config)   # initial config snapshot for restart
         return child
 
     def child(self, name: str) -> "ChildHandle":
@@ -765,6 +785,36 @@ class Operator:
                             stacklevel=2,
                         )
 
+            elif act.kind == ActionKind.RESTART_OPERATOR:
+                name = act.task_name
+                if not name:
+                    problems.append(
+                        f"action[{i}] RESTART_OPERATOR: task_name (child name) is required"
+                    )
+                elif name not in self.children:
+                    problems.append(
+                        f"action[{i}] RESTART_OPERATOR '{name}': unknown child; spawn it first"
+                    )
+                # depends_on holds child NAMES; unknown name → warn (do not raise).
+                for dep_name in act.depends_on:
+                    if dep_name not in self.children and dep_name not in self._child_starts:
+                        warnings.warn(
+                            f"Operator '{self.operator_id}': action[{i}] RESTART_OPERATOR "
+                            f"'{name}' depends_on child '{dep_name}' which is not a known "
+                            "child; the dependency will be dropped if still unknown at "
+                            "apply time.",
+                            UserWarning,
+                            stacklevel=2,
+                        )
+
+            elif act.kind == ActionKind.CANCEL_OPERATOR:
+                # Cancel is safe / idempotent: an unknown or unstarted name does not
+                # raise — the no-op is logged at apply time.
+                if not act.task_name:
+                    problems.append(
+                        f"action[{i}] CANCEL_OPERATOR: task_name (child name) is required"
+                    )
+
             elif act.kind == ActionKind.CANCEL_TASK:
                 if act.target_uid is None:
                     problems.append(f"action[{i}] CANCEL_TASK: target_uid is required")
@@ -879,7 +929,15 @@ class Operator:
 
         elif act.kind == ActionKind.SPAWN_OPERATOR:
             result = await self._spawn_operator(act)
-            self._track_future(result, act.task_name, act.task_kwargs)
+            if result is not None:   # None → idempotent no-op (already started)
+                self._track_future(result, act.task_name, act.task_kwargs)
+
+        elif act.kind == ActionKind.RESTART_OPERATOR:
+            result = await self._restart_operator(act)
+            self._track_future(result, act.task_name, {})
+
+        elif act.kind == ActionKind.CANCEL_OPERATOR:
+            await self._cancel_operator(act)
 
         elif act.kind == ActionKind.CANCEL_TASK:
             if act.target_uid is None:
@@ -894,16 +952,30 @@ class Operator:
                 raise ActionError("UPDATE_PARAM requires param_key")
             self.state.objectives[act.param_key] = act.param_value
 
-    async def _spawn_operator(self, act: Action) -> asyncio.Future:
+    async def _spawn_operator(self, act: Action) -> asyncio.Future | None:
         """Launch a child operator as a block, registering it on first use.
 
         ``act.task_name`` is the child name; ``act.depends_on`` lists upstream child
         **names** whose start-Futures gate this launch (resolved internally — the
-        policy never handles Futures or uids). Returns the child's block Future.
+        policy never handles Futures or uids). Returns the child's block Future, or
+        ``None`` when the child was already started (idempotent no-op).
         """
         name = act.task_name
         if not name:
             raise ActionError("SPAWN_OPERATOR: task_name (child name) is required")
+
+        # Idempotent: once a child has ever been started (including terminal DONE/
+        # FAILED/CANCELED), re-emitting spawn_operator is a no-op. Re-running is
+        # restart_operator's job. Well-written policies gate on `child.started`, so
+        # this warning fires only on a genuine double-spawn — replacing the silent
+        # "N overlapping runs" bug a re-emit used to cause.
+        if name in self._child_starts:
+            log.warning(
+                "Operator '%s': spawn_operator '%s' is a no-op — child already "
+                "started (status=%s); use restart_operator('%s') to re-run.",
+                self.operator_id, name, self.child(name).status, name,
+            )
+            return None
 
         child = self.children.get(name)
         if child is None:
@@ -915,16 +987,87 @@ class Operator:
             child = self.add_child(name, act.operator_cls, policy=act.policy,
                                    **act.task_kwargs)
 
+        fut = child.start(*self._resolve_child_deps(act.depends_on))
+        self._child_starts[name] = str(getattr(fut, "id", id(fut)))
+        return fut
+
+    def _resolve_child_deps(self, dep_names: list[str]) -> list[asyncio.Future]:
+        """Map upstream child **names** to their live start-Futures (skip unknown)."""
         dep_futures = []
-        for dep_name in act.depends_on:
+        for dep_name in dep_names:
             dep_uid = self._child_starts.get(dep_name)
             dep_fut = self.state.task_futures.get(dep_uid) if dep_uid else None
             if dep_fut is not None:
                 dep_futures.append(dep_fut)
+        return dep_futures
 
-        fut = child.start(*dep_futures)
+    def _reset_run_state(self, name: str) -> None:
+        """Wipe a child's run state back to its initial declared config.
+
+        Swaps a fresh :class:`RuntimeState` onto the child, re-seeds annotated
+        defaults, re-applies the stored ``add_child`` config, clears the stop event,
+        and drops the cached block factory so the next ``start()`` rebuilds it.
+        Runtime/observations/cycle are wiped; the seeded config (e.g. ``center``) is
+        preserved — restart replays the *initial* config, not evolved state.
+        """
+        child = self.children[name]
+        object.__setattr__(child, "state", RuntimeState(child.operator_id))
+        child._seed_default_objectives()
+        for key, value in self._child_config.get(name, {}).items():
+            setattr(child, key, value)
+        child._stop_event.clear()
+        object.__setattr__(child, "_block_factory", None)
+
+    async def _restart_operator(self, act: Action) -> asyncio.Future:
+        """Cancel any in-flight run of a registered child and re-launch it fresh.
+
+        ``act.task_name`` is the child name (must already be registered);
+        ``act.depends_on`` lists upstream child names to gate the new launch.
+        Returns the child's new block Future.
+        """
+        name = act.task_name
+        if not name:
+            raise ActionError("RESTART_OPERATOR: task_name (child name) is required")
+        child = self.children.get(name)
+        if child is None:
+            raise ActionError(
+                f"RESTART_OPERATOR '{name}': unknown child; spawn it first"
+            )
+
+        # Cancel the in-flight run if still live.
+        old_uid = self._child_starts.get(name)
+        old_fut = self.state.task_futures.get(old_uid) if old_uid else None
+        if old_fut is not None and not old_fut.done():
+            old_fut.cancel()
+
+        self._reset_run_state(name)
+        self._child_starts.pop(name, None)
+
+        fut = child.start(*self._resolve_child_deps(act.depends_on))
         self._child_starts[name] = str(getattr(fut, "id", id(fut)))
         return fut
+
+    async def _cancel_operator(self, act: Action) -> None:
+        """Cancel a child's in-flight block Future, leaving a CANCELED tombstone.
+
+        ``name`` stays in ``_child_starts`` so a later ``spawn_operator`` is still a
+        no-op; re-running after cancel is ``restart_operator``'s job. Cancelling an
+        unstarted (or already-finished) child is a logged no-op — cancel is safe.
+        """
+        name = act.task_name
+        if not name:
+            raise ActionError("CANCEL_OPERATOR: task_name (child name) is required")
+
+        uid = self._child_starts.get(name)
+        fut = self.state.task_futures.get(uid) if uid else None
+        if fut is None:
+            log.warning(
+                "Operator '%s': cancel_operator '%s' is a no-op — child not started.",
+                self.operator_id, name,
+            )
+            return
+        if not fut.done():
+            fut.cancel()   # done-callback delivers CANCELED
 
     # ── Dispatch ─────────────────────────────────────────────────────────────
 

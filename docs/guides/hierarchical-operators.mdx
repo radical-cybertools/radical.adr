@@ -1,0 +1,117 @@
+---
+title: "Hierarchical Operators"
+description: "A parent operator spawns a runtime-decided set of children — adaptive fan-out."
+---
+
+When one operator needs to coordinate others — an explorer that finds a region, then N refiners that
+search around it — you compose them as a parent with **child operators**. Children are first-class:
+you declare them, launch them from the policy, and observe them through a read-only handle. `Future`,
+`UID`, `artifacts`, and `child:*` string keys never appear in your code.
+
+**Runnable example:** [`examples/08-hierarchical-operator.py`](https://github.com/radical-cybertools/radical.adr/blob/main/examples/08-hierarchical-operator.py)
+
+## Declare children on the parent
+
+`add_child(name, OperatorCls, policy=…, **config)` registers a child, auto-wires `parent=self`,
+attaches a policy (a `Policy` instance **or** a class/factory called with the child), and seeds the
+config as the child's objectives:
+
+```python
+class CampaignOperator(Operator):
+    def __init__(self, engine, operator_id=None, **kwargs):
+        super().__init__(engine, operator_id, **kwargs)
+        self.add_child("explorer", SearchOperator, policy=SearchPolicy)
+
+    @observe
+    def watch(self, snapshot) -> dict:
+        return {"explorer": self.child("explorer"), "cycle": snapshot.cycle}
+```
+
+## Observe children through a ChildHandle
+
+`self.child(name)` returns a live, read-only `ChildHandle`:
+
+| Accessor | Meaning |
+|---|---|
+| `.status` | `NOT_STARTED` / `PENDING` / `RUNNING` / `DONE` / `FAILED` / `CANCELED` |
+| `.started` | `True` once ever launched (including terminal states) — the spawn-once gate |
+| `.done` / `.failed` | convenience booleans |
+| `.radius` (any name) | a reported objective by name; raises `AttributeError` if never reported |
+| `.get("radius", default)` | soft read with a default |
+
+## Launch and sequence from the policy
+
+`acts.spawn_operator` launches a declared child. `depends_on` lists upstream child **names** — the
+runtime resolves them to block futures so AsyncFlow gates the launch:
+
+```python
+Decision(actions=[acts.spawn_operator("explorer")])                       # launch the explorer
+Decision(actions=[acts.spawn_operator("merge", MergeOp, depends_on=["explorer"])])  # gate on it
+```
+
+## Adaptive fan-out
+
+Because names, count, and config are all runtime values, "explorer finds a region → spawn N refiners
+around it" is one list comprehension — no escape hatch, no `start()`/`fut.id` plumbing:
+
+```python
+class CampaignPolicy(Policy):
+    K = 3
+
+    @decide
+    async def run(self, obs):
+        if not obs["explorer"].started:                       # runtime-owned spawn-once gate
+            return Decision(actions=[self._act.spawn_operator("explorer")])
+
+        if obs["explorer"].done and not obs["refiner_0"].started:
+            best = obs["explorer"].best_x
+            return Decision(actions=[
+                self._act.spawn_operator(f"refiner_{i}", SearchOperator,
+                                         policy=SearchPolicy, depends_on="explorer",
+                                         center=best + (i - 1) * 0.5)
+                for i in range(self.K)
+            ])
+
+        if obs["refiner_0"].started and all(obs[f"refiner_{i}"].done for i in range(self.K)):
+            return Decision(stop=True)
+        return Decision()
+```
+
+## Lifecycle verbs — runtime-owned, declarative
+
+The intent lives in the **verb**, not a flag. There is no user-managed `fanned_out` boolean.
+
+| Verb | Behavior |
+|---|---|
+| `acts.spawn_operator(name, …)` | **Idempotent** "ensure launched." Once a child has *ever* started (`name in _child_starts`, including terminal `DONE`/`FAILED`/`CANCELED`), a re-emit is a **no-op + a logged warning**. |
+| `acts.restart_operator(name)` | Re-run: cancel in-flight → reset to the **initial** declared config (`_child_config`) → relaunch. Not idempotent. |
+| `acts.cancel_operator(name)` | `future.cancel()` the child's block Future, leaving a `CANCELED` tombstone. The name stays known. |
+
+<Note>
+**Well-written policies gate on `child.started`** and never hit the warning path — it is a safety net
+for a genuine double-spawn, replacing the silent "N overlapping runs" bug an unguarded re-emit used
+to cause. To re-run after a cancel, use `restart_operator` — `spawn_operator` on a canceled child is
+still a no-op because the name is still known.
+</Note>
+
+## Steering children
+
+A parent can push instructions down with `Decision(delegate_to=["explorer"], directives={...})`,
+which arrive in the child's `state.directives` next cycle.
+
+## Run it
+
+```bash
+python examples/08-hierarchical-operator.py
+```
+
+## Next
+
+<CardGroup cols={2}>
+  <Card title="Multi-operator" icon="diagram-project" href="/guides/multi-operator">
+    Independent and racing operators (no parent).
+  </Card>
+  <Card title="Decisions & Actions" icon="list-check" href="/concepts/decisions-and-actions">
+    The full ActionKind table.
+  </Card>
+</CardGroup>

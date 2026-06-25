@@ -1,0 +1,88 @@
+---
+title: "Record & Replay"
+description: "Capture a live run's observation trace, then A/B different policies offline."
+---
+
+A policy is (mostly) a function of the observation dict. That makes decisions **reproducible**: if
+you capture the exact `obs` sequence a live run produced, you can re-drive a *different* policy
+against it offline — no engine, no tasks — and compare what it would have decided. This is how you
+do deterministic A/B evaluation, regression tests, and debugging.
+
+**Runnable example:** [`examples/11-record-replay.py`](https://github.com/radical-cybertools/radical.adr/blob/main/examples/11-record-replay.py)
+
+## Record during a live run
+
+Attach a `RecordingObserver` — it captures the raw per-cycle `obs` dict (and the resulting decision,
+for inspection) to a JSONL trace:
+
+```python
+from radical.adr import RecordingObserver
+
+op = MyOperator(engine, observer=RecordingObserver("trace.jsonl"))
+await op.run_to_completion()
+```
+
+For the trace to be meaningful, the operator should surface a real evolving metric in `@observe`
+(e.g. `best_score`) so the recorded obs carries signal, not just a cycle counter.
+
+## Replay against a different policy — offline
+
+`replay_trace` re-runs a candidate policy against the recorded `obs` sequence, fully offline:
+
+```python
+from radical.adr import replay_trace
+
+decisions = await replay_trace("trace.jsonl", CandidatePolicy())
+```
+
+It reads **only** the recorded `obs` (the recorded `decision` is there for inspection). No engine,
+no `Operator`, no task dispatch — so it is deterministic and fast.
+
+<Note>
+**Replay is open-loop.** It replays the *policy only* — it does not re-execute actions, and the
+candidate's decisions do not change the recorded observation stream. You are comparing *what each
+policy would decide on identical conditions*, not running a new campaign. A `SPAWN_OPERATOR` decision
+carries live Python references (`operator_cls` / `policy`) that are `exclude=True`, so it does not
+round-trip through record/replay.
+</Note>
+
+## What it's good for
+
+| Use case | How |
+|---|---|
+| **A/B a new policy** | Record once with policy A; `replay_trace` with policy B; diff the decisions. |
+| **Regression testing** | Commit a trace; assert a policy's decisions stay stable across changes. |
+| **Debugging** | Inspect the exact `obs` the policy saw at the cycle that misbehaved. |
+
+## Observers in general
+
+`RecordingObserver` is one `ObserverBase`. The protocol has three synchronous hooks:
+
+```python
+class ObserverBase(Protocol):
+    def on_start(self, operator_id: str, metadata: dict) -> None: ...
+    def on_cycle(self, snapshot: Snapshot, obs: dict, decision: Decision) -> None: ...
+    def on_stop(self, final: Snapshot | None, reason: str) -> None: ...
+```
+
+`JsonlObserver` emits one JSON line per lifecycle event (`operator_start`, `cycle_start`,
+`decision`, `task_*`, `goal_*`, `operator_stop`) — feeding the HTML replay dashboards
+(`demo-visualization.html` force-directed, `demo-visualization-timeline.html` Gantt). See
+[Logging & observability](/guides/logging-and-observability).
+
+## Run it
+
+```bash
+python examples/11-record-replay.py
+```
+
+## Next
+
+<CardGroup cols={2}>
+  <Card title="Logging & observability" icon="eye" href="/guides/logging-and-observability">
+    Observers, JSONL events, and dashboards.
+  </Card>
+  <Card title="Policies" icon="diagram-project" href="/concepts/policies">
+    Why a policy is replayable.
+  </Card>
+</CardGroup>

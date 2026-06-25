@@ -1,0 +1,92 @@
+---
+title: "Resource-Aware Steering"
+description: "One Goal type for science and hardware — throttle on CPU, memory, or queue depth."
+---
+
+ADR is built for HPC, where "is the science done?" is only half the question — the other half is "is
+the cluster healthy and am I under budget?" Both are expressed with the **same** `Goal` type, because
+`Goal` is source-agnostic: it only cares what `@observe` puts into the obs dict.
+
+**Runnable example:** [`examples/10-resource-aware-search.py`](https://github.com/radical-cybertools/radical.adr/blob/main/examples/10-resource-aware-search.py)
+
+## The core idea
+
+A scientific convergence goal and a resource constraint sit side by side:
+
+```python
+@goals
+def criteria(self):
+    return [
+        Goal(name="converged",  metric="radius",      threshold=MIN_RADIUS, direction="minimize"),
+        Goal(name="cpu_healthy", metric="cpu_percent", threshold=CPU_LIMIT,  direction="minimize"),
+    ]
+```
+
+ADR has no telemetry classes and no special resource API. `cpu_percent` is just another key the
+policy and goals read from `obs`.
+
+## Surfacing resource metrics in @observe
+
+`@observe` is the single assembly point. It can pull `cpu_percent` from a user-managed telemetry
+subscription you update in `main()`, completely outside ADR:
+
+```python
+@observe
+def extract(self, snapshot) -> dict:
+    results = [v for k, v in snapshot.observations.items() if k.startswith("result.")]
+    return {
+        "radius":      snapshot.objectives.get("radius", 5.0),
+        "results":     results,
+        "cpu_percent": self.telemetry.cpu_percent,   # external source, your code owns it
+    }
+```
+
+<Note>
+**`snapshot.runtime` is never checked by goals automatically.** Any resource or telemetry metric
+must be surfaced explicitly through `@observe`, or the goal that reads it returns `False` and warns
+once. This is deliberate — ADR steers on what you choose to observe, nothing hidden.
+</Note>
+
+## Throttling, not just stopping
+
+A goal stops the operator; the *policy* reacts mid-flight. A resource-aware policy throttles the
+number of tasks it spawns when pressure is high:
+
+```python
+@decide
+async def run(self, obs):
+    budget = 1 if obs["cpu_percent"] > 80 else 4     # back off under load
+    return Decision(actions=[
+        self._act.evaluate(x=...) for _ in range(budget)
+    ])
+```
+
+Same operator, same goals — the steering changes with the metric.
+
+## Two metric sources, identical code
+
+The example ships with a `--local` mode that simulates `cpu_percent` via `update_param` instead of a
+real backend subscription. The operator code, the goals, and the policy are **identical** — only the
+metric's origin differs. That is the source-agnostic property in action:
+
+```bash
+python examples/10-resource-aware-search.py           # real ConcurrentExecutionBackend
+python examples/10-resource-aware-search.py --local   # simulated CPU, no RHAPSODY
+```
+
+## Beyond CPU
+
+The same pattern tracks GPU utilization, memory pressure, queue depth, or a compute-hour budget —
+anything you can read and put into `obs`. See the three-goal "hits AND budget AND cpu" pattern in
+[Goals & convergence](/guides/goals-and-convergence#multiple-static-goals-and).
+
+## Next
+
+<CardGroup cols={2}>
+  <Card title="Goals" icon="bullseye" href="/concepts/goals">
+    Why Goal is source-agnostic.
+  </Card>
+  <Card title="AsyncFlow integration" icon="layer-group" href="/integrations/asyncflow">
+    The execution backends below ADR.
+  </Card>
+</CardGroup>

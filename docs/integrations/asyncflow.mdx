@@ -1,0 +1,85 @@
+---
+title: "AsyncFlow"
+description: "The execution layer below ADR — engine, function_task, blocks, and the feature branch."
+---
+
+ADR steers; [AsyncFlow](https://github.com/radical-cybertools/radical.asyncflow) runs. Every `@act`
+that returns a Future dispatched it through AsyncFlow, which executes it on a backend (a local
+executor, or RADICAL-Pilot on an HPC cluster). ADR never reaches below this API — that is the
+[sacred boundary](/get-started/mental-model#the-sacred-boundary).
+
+## Engine construction
+
+```python
+from concurrent.futures import ThreadPoolExecutor   # or ProcessPoolExecutor
+from radical.asyncflow import LocalExecutionBackend, WorkflowEngine
+
+backend = await LocalExecutionBackend(ThreadPoolExecutor(max_workers=8))
+engine  = await WorkflowEngine.create(backend)
+op      = MyOperator(engine)
+```
+
+## `@act` and `engine.block`
+
+ADR does **not** pre-register `@act` methods with AsyncFlow. Each `@act` calls
+`self.engine.function_task(fn)(...)` or `self.engine.block(fn)(...)` at invocation time — each call
+creates a fresh component with a new UID, which is correct by AsyncFlow's design.
+
+```python
+@act
+async def dock(self, candidate: str):                    # backend task → Future
+    return self.engine.function_task(_dock_impl)(candidate=candidate)
+
+@act
+async def md_refine(self, candidate: str):               # block → orchestrates sub-tasks
+    async def _block(c):
+        prepped = await self.engine.function_task(_prep)(c)
+        return await self.engine.function_task(_simulate)(prepped)
+    return self.engine.block(_block)(candidate)
+```
+
+See [Decorators](/concepts/decorators#act-a-capability) for the local-vs-task-vs-block return-type
+rules.
+
+## Thread vs process executor
+
+<Note>
+With `ProcessPoolExecutor`, every function passed to `engine.function_task(...)` must be a
+**module-level, importable (picklable)** async function — that is why `@act` impls live at module
+scope and take no `self`. With `ThreadPoolExecutor` or local execution, any async function works.
+</Note>
+
+## Operator blocks and `start()`
+
+`op.start(*dep_futures)` wraps `run_to_completion()` as an `engine.block` (lazy, cached on first
+call). The returned block Future integrates an operator into AsyncFlow's native dependency graph.
+
+This is an **internal mechanic** — `SPAWN_OPERATOR` calls it for you, resolving `depends_on` child
+names to their start-futures. User code launches children with `acts.spawn_operator(...)`, never
+`start()` directly. See [Hierarchical operators](/guides/hierarchical-operators).
+
+## Feature-branch dependency
+
+ADR requires the `feature/enable_block_cancellation` branch of AsyncFlow. If you spawn, restart, or
+cancel operators or tasks at runtime, your AsyncFlow build must include it:
+
+| Feature | ADR usage |
+|---------|-----------|
+| `future.state` attribute | `_sync_running_states` polls for `PENDING → RUNNING` transitions |
+| Block-cancellation propagation | Cancelling an operator's block also cancels its spawned tasks |
+| `workflow_id` kwarg | Task attribution (passed by `@act` methods) |
+| `patched_cancel` fix | `future.cancel()` returns a bool, not a method reference |
+| Idempotent `handle_task_cancellation` | Safe repeated cancellation |
+
+See [Installation](/get-started/installation#asyncflow-feature-branch).
+
+## Next
+
+<CardGroup cols={2}>
+  <Card title="Decorators" icon="at" href="/concepts/decorators">
+    How `@act` dispatches to the engine.
+  </Card>
+  <Card title="Resource-aware steering" icon="microchip" href="/guides/resource-aware-steering">
+    Steering against backend pressure.
+  </Card>
+</CardGroup>

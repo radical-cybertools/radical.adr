@@ -201,7 +201,9 @@ class Decision:
 |------|--------|
 | `SPAWN_TASK` | Look up `@act` in `_adl_act_registry`, `await fn(self, *dep_futures, **kwargs)`, handle return |
 | `SPAWN_BLOCK` | Alias for `SPAWN_TASK` — same lookup and execution path |
-| `SPAWN_OPERATOR` | Register-or-reuse a child operator by name, then launch it as a block (`child.start(*dep_futs)`); track its block Future like any spawned task |
+| `SPAWN_OPERATOR` | Register-or-reuse a child operator by name, then launch it as a block (`child.start(*dep_futs)`); track its block Future like any spawned task. **Idempotent**: if the child has ever been started (`name in _child_starts`), it is a no-op + a logged warning |
+| `RESTART_OPERATOR` | Re-run a registered child: cancel any in-flight run, reset the child to its **initial** config (`_child_config[name]`), then launch fresh. Not idempotent |
+| `CANCEL_OPERATOR` | `future.cancel()` on the child's block Future, leaving a `CANCELED` tombstone (name stays in `_child_starts`) |
 | `CANCEL_TASK` | `future.cancel()` on tracked future |
 | `UPDATE_PARAM` | `state.objectives[key] = value` |
 
@@ -223,17 +225,21 @@ acts.cancel_task(uid)                          # CANCEL_TASK
 acts.update_param("radius", 2.5)               # UPDATE_PARAM
 acts.stop()                                    # Decision(stop=True)
 
-# spawn_operator — launch a child operator by name (register-or-reuse):
-acts.spawn_operator("explorer")                            # re-launch a declared child
+# spawn_operator — launch a child operator by name (register-or-reuse, idempotent):
+acts.spawn_operator("explorer")                            # launch a declared child (no-op if started)
 acts.spawn_operator("refiner_0", SearchOperator,           # register + launch a new one
                     policy=SearchPolicy, center=3.1)
 
-# depends_on — task UIDs for SPAWN_TASK, child names for SPAWN_OPERATOR:
+# operator lifecycle verbs — re-run / stop a registered child:
+acts.restart_operator("explorer")                          # cancel + reset-to-initial + relaunch
+acts.cancel_operator("explorer")                           # cancel in-flight → CANCELED tombstone
+
+# depends_on — task UIDs for SPAWN_TASK, child names for SPAWN_OPERATOR/RESTART_OPERATOR:
 acts.spawn_task("refine", depends_on=[task_uid])           # gate on an upstream task
 acts.spawn_operator("merge", MergeOp, depends_on=["refiner_0", "refiner_1"])
 ```
 
-`depends_on` is a first-class parameter on all spawning methods — it is extracted from kwargs and set on `act.depends_on`, not passed as a task kwarg. `spawn_operator` accepts a single name or a list of names.
+`depends_on` is a first-class parameter on all spawning methods — it is extracted from kwargs and set on `act.depends_on`, not passed as a task kwarg. `spawn_operator` / `restart_operator` accept a single name or a list of names.
 
 LLM schema: `op.get_actions("openai")` / `"anthropic"` / `"langgraph"` — renders all `@act` signatures and docstrings in vendor format.
 
@@ -398,7 +404,8 @@ class CampaignOperator(Operator):
 ```
 
 **Parent observes children** through the `ChildHandle` returned by `self.child(name)`:
-- `obs["explorer"].status` — `NOT_STARTED` / `PENDING` / `RUNNING` / `DONE` / `FAILED`
+- `obs["explorer"].status` — `NOT_STARTED` / `PENDING` / `RUNNING` / `DONE` / `FAILED` / `CANCELED`
+- `obs["explorer"].started` — `True` once ever launched (incl. terminal states); the status gate for spawn-once
 - `obs["explorer"].done` / `.failed` — convenience booleans
 - `obs["explorer"].radius` — any reported objective by name (raises `AttributeError` if the child never reported it; `.get("radius", default)` for a soft read)
 
@@ -422,25 +429,34 @@ class CampaignPolicy(Policy):
 
     @decide
     async def run(self, obs):
-        if obs["explorer"].status == "NOT_STARTED":
+        if not obs["explorer"].started:                      # runtime-owned spawn-once gate
             return Decision(actions=[self._act.spawn_operator("explorer")])
 
-        if obs["explorer"].done and not obs["fanned_out"]:   # user-managed spawn-once guard
+        if obs["explorer"].done and not obs["refiner_0"].started:
             best = obs["explorer"].best_x
             return Decision(actions=[
-                self._act.update_param("fanned_out", True),
-                *[self._act.spawn_operator(f"refiner_{i}", SearchOperator,
-                                           policy=SearchPolicy, depends_on="explorer",
-                                           center=best + (i - 1) * 0.5)
-                  for i in range(self.K)],
+                self._act.spawn_operator(f"refiner_{i}", SearchOperator,
+                                         policy=SearchPolicy, depends_on="explorer",
+                                         center=best + (i - 1) * 0.5)
+                for i in range(self.K)
             ])
 
-        if obs["fanned_out"] and all(obs[f"refiner_{i}"].done for i in range(self.K)):
+        if obs["refiner_0"].started and all(obs[f"refiner_{i}"].done for i in range(self.K)):
             return Decision(stop=True)
         return Decision()
 ```
 
-> Idempotency (spawn-once) is currently a user-managed guard flag (`fanned_out` above); a first-class idempotency API is a planned follow-up.
+> **Spawn-once is runtime-owned, not a user flag.** `spawn_operator` is idempotent: once a
+> child has ever been started (`name in _child_starts`, *including* terminal `DONE`/`FAILED`/
+> `CANCELED`), re-emitting it is a no-op + a logged warning. Well-written policies gate on
+> `child.started` (above), so they never hit the warning path — it is a safety net for a genuine
+> double-spawn, replacing the silent "N overlapping runs" bug an unguarded re-emit used to cause.
+>
+> **`restart_operator(name)`** re-runs a child: it cancels any in-flight run, resets the child to
+> its **initial** declared config (the kwargs captured by `add_child` in `_child_config`), and
+> relaunches. **`cancel_operator(name)`** cancels the child's block Future, leaving a `CANCELED`
+> tombstone — the name stays known, so a later `spawn_operator` is still a no-op; re-running after
+> a cancel is `restart_operator`'s job.
 
 **Parent steers children** via `Decision(delegate_to=["explorer"], directives={...})`.
 
@@ -563,4 +579,6 @@ Requires `feature/enable_block_cancellation` in AsyncFlow:
 
 **SNAPSHOT propagates all child state.** When a child sends a SNAPSHOT to its parent, the parent merges child observations (`child:{id}:{k}`, per-cycle), runtime statuses (`child:{id}:runtime:{k}`, persistent), and objectives (`child:{id}:obj:{k}`, persistent) — giving the parent full visibility into each child's state. Persistent families survive across parent cycles (latest-wins) so the latest child metrics stay readable even when a child's final SNAPSHOT and its block-Future `DONE` event land on different cycles.
 
-**Child operators are first-class.** A parent declares children with `add_child(name, OperatorCls, policy=…, **config)`, launches them with the `SPAWN_OPERATOR` action (`acts.spawn_operator(name, …, depends_on=[child_names])`), and observes them through `self.child(name)` → a read-only `ChildHandle` (`.status`/`.done`/`.failed` and metric-by-name). `Future`, `UID`, `artifacts`, and `child:*` string keys are internal — they never appear in policy or operator code. Names, count, config, and dependencies are all runtime values, so adaptive fan-out needs no escape hatch. (`policy=` may be a `Policy` instance or a class/factory called with the child. Spawn-once idempotency is a user-managed guard flag pending a first-class follow-up.)
+**Child operators are first-class.** A parent declares children with `add_child(name, OperatorCls, policy=…, **config)`, launches them with the `SPAWN_OPERATOR` action (`acts.spawn_operator(name, …, depends_on=[child_names])`), and observes them through `self.child(name)` → a read-only `ChildHandle` (`.status`/`.started`/`.done`/`.failed` and metric-by-name). `Future`, `UID`, `artifacts`, and `child:*` string keys are internal — they never appear in policy or operator code. Names, count, config, and dependencies are all runtime values, so adaptive fan-out needs no escape hatch. (`policy=` may be a `Policy` instance or a class/factory called with the child.)
+
+**Child lifecycle is runtime-owned, declarative.** `spawn_operator` is idempotent ("ensure launched"): a re-emit on an already-started child (`name in _child_starts`, incl. terminal states) is a no-op + a logged warning — there is no user-managed spawn-once flag. `restart_operator(name)` re-runs a child from its **initial** config (`_child_config`); `cancel_operator(name)` cancels its block Future, leaving a `CANCELED` tombstone. All three are *steering* verbs — they delegate gating to `child.start(*futs)` / `future.cancel()` and never schedule, resolve dependencies, or block.

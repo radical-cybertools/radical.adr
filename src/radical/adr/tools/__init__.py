@@ -84,6 +84,33 @@ class ActionSet:
         return Action(kind=ActionKind.SPAWN_OPERATOR, task_name=name, depends_on=deps,
                       operator_cls=operator_cls, policy=policy, task_kwargs=config)
 
+    def restart_operator(
+        self,
+        name:       str,
+        *,
+        depends_on: "str | list[str] | None" = None,
+    ) -> Action:
+        """Re-run an already-registered child from the start.
+
+        Cancels any in-flight run, resets the child to its **initial** declared
+        config (the kwargs given to ``add_child`` / first ``spawn_operator``), and
+        re-launches it. ``depends_on`` lists upstream child **names** gating the new
+        launch (single name or list). Unlike ``spawn_operator`` this is *not*
+        idempotent — it always starts a fresh run.
+        """
+        deps = [depends_on] if isinstance(depends_on, str) else list(depends_on or [])
+        return Action(kind=ActionKind.RESTART_OPERATOR, task_name=name, depends_on=deps)
+
+    def cancel_operator(self, name: str) -> Action:
+        """Cancel a child operator's in-flight run by name.
+
+        Cancels the child's block Future (propagating to its spawned tasks); the
+        child then shows ``CANCELED``. The name stays known to the runtime, so a
+        later ``spawn_operator`` is still a no-op — re-running is ``restart_operator``.
+        Cancelling an unstarted/finished child is a logged no-op.
+        """
+        return Action(kind=ActionKind.CANCEL_OPERATOR, task_name=name)
+
     def cancel_task(self, uid: str) -> Action:
         """Cancel a running or pending task by its UID."""
         return Action(kind=ActionKind.CANCEL_TASK, target_uid=uid)
@@ -163,6 +190,10 @@ _BUILTIN_SPECS = [
      [("name", str), ("kwargs", dict)]),
     ("spawn_operator", "Spawn a child operator by name; depends_on lists upstream child names.",
      [("name", str), ("depends_on", list)]),
+    ("restart_operator", "Re-run a registered child from the start (resets to initial config).",
+     [("name", str), ("depends_on", list)]),
+    ("cancel_operator", "Cancel a child operator's in-flight run by name (leaves a CANCELED tombstone).",
+     [("name", str)]),
     ("cancel_task",    "Cancel a running or pending task by its UID.",
      [("uid", str)]),
     ("update_param",   "Write a key-value pair into operator objectives.",

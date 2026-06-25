@@ -1,0 +1,70 @@
+---
+title: "Design Invariants"
+description: "The rules that hold across all of ADR — the contract the runtime guarantees."
+---
+
+These invariants are the contract behind every page in these docs. If something surprises you,
+check it against this list first.
+
+## The sacred boundary
+
+The Operator **only Observes, Decides, and Acts.** It never owns scheduling, execution lifecycle, or
+distributed resources. AsyncFlow owns workflow execution; RHAPSODY / RADICAL-Pilot own task
+execution. Even `spawn_operator` / `cancel_operator` / `cancel_task` are *steering* — they delegate
+to `child.start(*futures)` and `future.cancel()`. See
+[Mental model](/get-started/mental-model#the-sacred-boundary).
+
+## Mandatory decorators
+
+- **`@observe` is mandatory.** `run()` raises `TypeError` before the first cycle if undefined. No
+  default observation exists.
+- **`@decide` is mandatory.** An empty `Policy` raises `PolicyError` on first call — no silent
+  empty-`Decision` fallthrough.
+
+## Execution model
+
+- **`@act` runs in the event loop** with `self` available, and chooses its own execution strategy:
+  local computation, `engine.function_task`, or `engine.block`. The operator never pre-registers
+  tasks — registration happens at invocation time.
+- **`_apply_one` is execution-agnostic.** It calls the `@act` method, inspects the return (Future or
+  plain value), and routes accordingly. One code path for all execution modes.
+- **One-cycle latency.** A task dispatched in cycle N produces a result visible in cycle N+1 —
+  async tasks (done-callback → `put_nowait`) and local acts (`put_nowait`) alike.
+
+## Input and state
+
+- **The inbox is the only input channel.** Task completions, local results, child snapshots, parent
+  directives, MCP mutations — all arrive through `inbox` and are processed in `_drain_inbox`. No
+  out-of-band state mutations.
+- **State proxying is transparent.** `self.radius = 2.5` writes `state.objectives["radius"]`, visible
+  in `snapshot.objectives` and readable in `@observe`. No serialization step.
+
+## Goals
+
+- **Goals check before act.** `_check_goals` runs after DECIDE, before ACT. The stop cycle's actions
+  still apply.
+- **Goals are source-agnostic and explicit.** `satisfied` reads `obs[metric]` then
+  `snapshot.objectives[metric]`; `snapshot.runtime` is never auto-checked. Resource metrics must be
+  surfaced through `@observe`.
+
+## Children
+
+- **Child operators are first-class.** Declared with `add_child`, launched with `SPAWN_OPERATOR`,
+  observed through `self.child(name)` → a read-only `ChildHandle`. `Future`, `UID`, `artifacts`, and
+  `child:*` string keys are internal — they never appear in policy or operator code. Names, count,
+  config, and dependencies are all runtime values.
+- **SNAPSHOT propagates all child state.** A child's observations mirror into the parent's per-cycle
+  `observations`; its runtime and objectives mirror into the parent's **persistent** `objectives`
+  (latest-wins), so the latest child metrics survive across parent cycles even when a child's final
+  SNAPSHOT and its block-Future `DONE` land on different cycles.
+- **Child lifecycle is runtime-owned, declarative.** `spawn_operator` is idempotent ("ensure
+  launched") — a re-emit on an already-started child (incl. terminal states) is a no-op + a logged
+  warning; there is no user-managed spawn-once flag. `restart_operator(name)` re-runs from the
+  **initial** config; `cancel_operator(name)` leaves a `CANCELED` tombstone. All three are steering
+  verbs.
+
+## See also
+
+- [SYSTEM.md](https://github.com/radical-cybertools/radical.adr/blob/main/SYSTEM.md) — the internal
+  technical spec these invariants are distilled from ·
+  [Changelog](/reference/changelog)

@@ -1,0 +1,63 @@
+---
+title: "Changelog"
+description: "Notable changes to radical.adr."
+---
+
+The canonical changelog lives in
+[`CHANGELOG.md`](https://github.com/radical-cybertools/radical.adr/blob/main/CHANGELOG.md) and
+follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) / [SemVer](https://semver.org). The
+current unreleased work is summarized below.
+
+## Unreleased
+
+Six validated gaps from downstream (Campaign Manager) integration feedback, plus first-class child
+operators (`SPAWN_OPERATOR` / `add_child` / `ChildHandle`) with declarative, runtime-owned lifecycle
+verbs. Full suite: 91 passing.
+
+### Added
+
+- **First-class child operators** — composed without runtime plumbing.
+  `acts.spawn_operator(name, OperatorCls, policy=…, depends_on=[names], **config)` register-or-reuse
+  then launch a child as a block; names, count, config, and dependencies are all runtime values.
+  `Operator.add_child(...)` declares a child; `Operator.child(name)` returns a read-only
+  `ChildHandle`. `Future`/`UID`/`artifacts`/`child:*` keys no longer appear in user code.
+  `depends_on` is shared across kinds — task **uids** for `SPAWN_TASK`, child **names** for
+  `SPAWN_OPERATOR`. See [Hierarchical operators](/guides/hierarchical-operators).
+- **Declarative operator-lifecycle verbs** — `spawn_operator` is **idempotent** (re-emit on an
+  already-started child, incl. terminal states, is a no-op + a logged warning). `restart_operator`
+  re-runs from **initial** config; `cancel_operator` leaves a `CANCELED` tombstone. New
+  `ChildHandle.started` is the status gate policies use instead of a boolean flag. `ActionKind` is
+  now 7.
+- **Record / replay** — `RecordingObserver` and `replay_trace()` record a live run's per-cycle obs
+  to JSONL and replay it offline against any other policy. See
+  [Record & replay](/guides/record-and-replay).
+- **`Goal(inclusive=...)`** — boundary-inclusive comparison (`<=`/`>=`); defaults to `False`.
+- **`Policy(..., timeout=...)`** — per-call timeout on the composed primary; a hang triggers the
+  fallback.
+- **`LLMPolicy.record_usage(...)`** — bounded local bookkeeping of token/latency/cost (never flows
+  through state/snapshot/observe).
+
+### Changed
+
+- **Pre-flight action validation** — validate-all-then-apply-all; one invalid action raises one
+  `ActionError` and aborts the batch.
+- **`examples/08-hierarchical-operator.py` is now status-gated** — the `fanned_out` flag is gone;
+  fan-out gates on `ChildHandle.started`.
+- **Docs** — `ADR.md` multi-goal AND example; `SYSTEM.md` 3-arg `on_cycle`, record/replay, and
+  `timeout` / `LLMPolicy` helpers.
+
+### Fixed
+
+- A hung primary in a `Policy(primary, fallback)` composition previously blocked the loop
+  indefinitely — now bounded by `timeout`.
+- A goal landing exactly on its threshold never fired under strict `<`/`>` — addressable via
+  `inclusive`.
+
+### Breaking
+
+- **`ObserverBase.on_cycle`** signature is now `(self, snapshot, obs, decision)` — observers receive
+  the `@observe` output directly.
+- **`Operator.spawn_child()` removed**, replaced by `add_child(name, OperatorCls, policy=…, **config)`.
+- **Child SNAPSHOT propagation destination changed** — a child's *persistent* runtime/objectives now
+  mirror into the parent's persistent `objectives` (`child:{id}:runtime:{k}`, `child:{id}:obj:{k}`)
+  rather than per-cycle `observations`. Prefer reading via `ChildHandle`.

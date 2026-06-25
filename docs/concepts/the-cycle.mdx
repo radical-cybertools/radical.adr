@@ -1,0 +1,102 @@
+---
+title: "The Cycle"
+description: "What an Operator does each iteration: drain, observe, decide, act, check goals."
+---
+
+`op.run()` is an async generator. Each iteration is one **Run → Observe → Decide → Act** cycle,
+ending in a yielded `Snapshot`. Understanding the order — and especially the *latency* — is what
+separates a policy that works from one that double-spawns.
+
+```mermaid
+flowchart LR
+    RUN --> OBSERVE --> DECIDE --> ACT
+    ACT -->|yield Snapshot, loop| RUN
+```
+
+## RUN — drain the inbox
+
+The inbox (`asyncio.Queue`) is the **only input channel**. `_drain_inbox` processes up to 64
+messages per cycle: the first message blocks for up to 0.05s, the rest are drained with
+`get_nowait()`. After draining, `_sync_running_states()` polls `future.state` to promote tasks from
+`PENDING` to `RUNNING`.
+
+Messages that arrive:
+
+| MessageKind | From | Becomes |
+|---|---|---|
+| `TASK_EVENT` | AsyncFlow / local act | `state.runtime[uid]`, plus `result.{uid}` or `error.{uid}` |
+| `SNAPSHOT` | a child operator | mirrored `child:{id}:*` keys |
+| `DIRECTIVE` | the parent operator | `state.directives` |
+| `STOP` | system | ends the loop |
+
+## OBSERVE — assemble metrics
+
+The operator calls your `@observe(snapshot)` method, which returns a plain `dict`. This is the
+**single assembly point for all metrics** — task results, operator state, or external telemetry.
+The policy and the goals see *only* this dict.
+
+## DECIDE — choose actions, then check goals
+
+Two things happen, in order:
+
+1. `policy.decide(obs)` returns a `Decision` (actions, goal proposals, `stop`, delegations).
+2. **Goal check.** All `static_goals + runtime_goals` are evaluated against `obs`. If they are all
+   satisfied, `decision.stop` is forced to `True`.
+
+```python
+all_goals = static_goals + runtime_goals
+if all_goals and all(g.satisfied(obs, snapshot) for g in all_goals):
+    decision.stop = True
+```
+
+<Note>
+**Goals check before ACT, but the stop cycle still acts.** The goal check fires after DECIDE and
+before ACT. Any actions the policy returned in the stopping cycle are still applied before the
+operator exits — stopping does not discard the final batch.
+</Note>
+
+## ACT — apply the decision
+
+Each `Action` is applied by `_apply_one`, which is execution-strategy-agnostic: it calls the `@act`
+method, inspects the return, and routes accordingly.
+
+```mermaid
+flowchart TB
+    P["policy decides → Action(SPAWN_TASK, &quot;dock&quot;, kwargs)"] --> AO["_apply_one"]
+    AO --> R["fn = registry[&quot;dock&quot;]<br/>deps = resolve(act.depends_on)<br/>result = await fn(self, *deps, **kwargs)"]
+    R -->|Future| F["track future<br/>+ done-callback"]
+    R -->|plain value| V["inbox.put_nowait<br/>(TASK_EVENT{DONE})"]
+```
+
+## The one-cycle latency
+
+This is the rule that governs policy design: **a task dispatched in cycle N produces a result in
+cycle N+1.**
+
+- An async task's done-callback fires `inbox.put_nowait(TASK_EVENT)` — drained next cycle.
+- A local act's return value is *also* delivered via `put_nowait` — same one-cycle latency.
+
+So `@observe` in cycle N sees results from work dispatched in cycle N−1. A policy that assumes its
+own freshly-spawned task is already done will misfire — gate on observed state instead (e.g.
+`child.started`, or the presence of a `result.{uid}` key).
+
+## What persists across cycles
+
+After each cycle, per-cycle namespaces are cleared and persistent ones carry forward:
+
+| Cleared each cycle | Persists |
+|---|---|
+| `observations`, `directives` | `runtime`, `objectives`, `artifacts`, `task_context` |
+
+See [State & Snapshots](/concepts/state-and-snapshots) for the full model.
+
+## Next
+
+<CardGroup cols={2}>
+  <Card title="State & Snapshots" icon="database" href="/concepts/state-and-snapshots">
+    The namespaces, their lifetimes, and the frozen Snapshot.
+  </Card>
+  <Card title="Decisions & Actions" icon="list-check" href="/concepts/decisions-and-actions">
+    Everything a policy can return.
+  </Card>
+</CardGroup>

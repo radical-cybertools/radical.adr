@@ -1,0 +1,54 @@
+---
+title: "API · Goals"
+description: "The Goal dataclass and its satisfaction contract."
+---
+
+Imported from `radical.adr`. See [Goals](/concepts/goals) for the overview.
+
+## `Goal`
+
+```python
+Goal(name, metric, threshold, direction="minimize", inclusive=False)
+```
+
+A dataclass. Satisfied when `obs[metric]` crosses `threshold`.
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `name` | `str` | — | Identity. A runtime goal with the same name upserts in place. |
+| `metric` | `str` | — | Key looked up in the observation dict. |
+| `threshold` | `float` | — | Boundary value. |
+| `direction` | `str` | `"minimize"` | `"minimize"` → satisfied when `value < threshold`; `"maximize"` → `value > threshold`. |
+| `inclusive` | `bool` | `False` | `True` flips to `<=` / `>=`. |
+
+### `satisfied(obs, snapshot) -> bool`
+
+Metric lookup order:
+
+1. `obs[metric]` — primary (what `@observe` returned).
+2. `snapshot.objectives[metric]` — fallback (operator state).
+
+If the metric is found in neither, returns `False` and emits a one-time `UserWarning`.
+`snapshot.runtime` is **not** consulted — surface resource metrics through `@observe`.
+
+```python
+# minimize: satisfied when value < 0.005  (or <= with inclusive=True)
+Goal(name="converged", metric="radius", threshold=0.005, direction="minimize")
+
+# maximize, inclusive: fires at exactly 5 hits
+Goal(name="hits", metric="n_hits", threshold=5, direction="maximize", inclusive=True)
+```
+
+## Static vs runtime goals
+
+- **Static** — returned by an operator's `@goals` method.
+- **Runtime** — proposed by a policy via `Decision(goals=[...])`, removed via
+  `Decision(remove_goals=["name"])`.
+
+Both are evaluated together every cycle; the operator stops when **all** are satisfied. See
+[Goals & convergence](/guides/goals-and-convergence).
+
+## See also
+
+- [api-decision](/reference/api-decision) — `Decision.goals` / `remove_goals` ·
+  [api-operator](/reference/api-operator) — `@goals`

@@ -11,11 +11,13 @@ from radical.adr.goals import Goal
 
 
 class ActionKind(str, Enum):
-    SPAWN_TASK     = "spawn_task"
-    CANCEL_TASK    = "cancel_task"
-    SPAWN_BLOCK    = "spawn_block"
-    SPAWN_OPERATOR = "spawn_operator"
-    UPDATE_PARAM   = "update_param"
+    SPAWN_TASK       = "spawn_task"
+    CANCEL_TASK      = "cancel_task"
+    SPAWN_BLOCK      = "spawn_block"
+    SPAWN_OPERATOR   = "spawn_operator"
+    RESTART_OPERATOR = "restart_operator"
+    CANCEL_OPERATOR  = "cancel_operator"
+    UPDATE_PARAM     = "update_param"
 
 
 class Action(BaseModel):
@@ -26,12 +28,16 @@ class Action(BaseModel):
     time inside the operator — never here.
 
     ``depends_on`` is interpreted by ``kind``: for ``SPAWN_TASK``/``SPAWN_BLOCK``
-    it lists upstream task **uids**; for ``SPAWN_OPERATOR`` it lists upstream
-    child operator **names**.  Either way the resolved Futures gate the launch.
+    it lists upstream task **uids**; for ``SPAWN_OPERATOR``/``RESTART_OPERATOR`` it
+    lists upstream child operator **names**.  Either way the resolved Futures gate
+    the launch.
 
     For ``SPAWN_OPERATOR``: ``task_name`` is the child name, ``task_kwargs`` is
     the child's construction config, and ``operator_cls`` / ``policy`` carry live
     Python references (excluded from serialization).
+
+    For ``RESTART_OPERATOR`` / ``CANCEL_OPERATOR``: ``task_name`` is the child name;
+    ``operator_cls`` / ``policy`` are unused (the child is already registered).
     """
 
     kind:        ActionKind

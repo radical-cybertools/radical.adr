@@ -1,0 +1,94 @@
+---
+title: "Policies"
+description: "Decision logic via @decide — composition, fallback, timeout, and LLM policies."
+---
+
+A `Policy` is where the *thinking* lives. It receives the observation dict and returns a `Decision`.
+It is deliberately separate from the `Operator` so you can swap decision logic — a rule, an LLM, a
+LangGraph agent — without touching state, acts, or goals.
+
+## Writing a policy
+
+```python
+from radical.adr import Policy, decide, Decision
+
+class SearchPolicy(Policy):
+    def __init__(self, op):
+        super().__init__()
+        self._act = op.get_actions()   # ActionSet: one callable per @act
+
+    @decide
+    async def run(self, obs: dict) -> Decision:
+        if obs["best"] is not None:
+            new_c, new_r = obs["best"]["x"], obs["radius"] * 0.5
+            return Decision(actions=[
+                self._act.update_param("center", new_c),
+                self._act.update_param("radius", new_r),
+                *[self._act.evaluate(x=new_c + new_r*(2*i/3-1)) for i in range(4)],
+            ])
+        return Decision(actions=[self._act.evaluate(x=obs["center"]) ])
+```
+
+<Note>
+**`@decide` is mandatory.** An empty `Policy` with no composition raises `PolicyError` on its first
+call — there is no silent empty-`Decision` fallthrough. A `@decide` method must return a `Decision`,
+or a `TypeError` is raised.
+</Note>
+
+## Composition: primary, fallback, timeout
+
+`Policy` is also a composition class. Pass a primary and a fallback, and optionally a timeout:
+
+```python
+Policy(primary=LLMPolicy(), fallback=RulePolicy(), timeout=30.0)
+```
+
+The fallback is invoked when the primary **raises**, returns **`None`**, *or* (when `timeout` is
+set) **hangs longer than `timeout` seconds**. The timeout exists so a wedged primary can't block the
+Observe → Decide → Act loop forever.
+
+```python
+op.policy = Policy(primary=MockLLMPolicy(), fallback=ProteinDesignPolicy(op))
+```
+
+## LLM policies
+
+`LLMPolicy` is a thin `Policy` subclass. It adds two helpers and is otherwise just a policy with a
+`@decide` method that calls a model:
+
+- `render_observation(obs)` — convert the obs dict to a prompt string (default: JSON dump).
+- `record_usage(tokens=, latency=, cost=)` — append one entry to a bounded `usage_history` deque
+  (maxlen 256), called manually after your vendor call.
+
+```python
+class OpenRouterPolicy(LLMPolicy):
+    @decide
+    async def run(self, obs: dict) -> Decision:
+        prompt = self.render_observation(obs)
+        ...  # vendor call returns structured output
+        self.record_usage(tokens=resp.usage.total_tokens)
+        return Decision(actions=[...])
+```
+
+<Note>
+Usage tracking is **purely local bookkeeping**. It never flows through `state`, `snapshot`, or
+`@observe` — ADR grows no telemetry pipeline from it. See [LLM policies](/guides/llm-policies).
+</Note>
+
+## Gotchas
+
+- The policy holds an `ActionSet` (`op.get_actions()`), not the operator's internals.
+- A policy is *pure-ish*: given the same `obs`, it should return a comparable `Decision`. This is
+  what makes [record & replay](/guides/record-and-replay) meaningful.
+- The policy never executes work or touches a `Future` — it only describes a `Decision`.
+
+## Next
+
+<CardGroup cols={2}>
+  <Card title="Decisions & Actions" icon="list-check" href="/concepts/decisions-and-actions">
+    What `@decide` returns.
+  </Card>
+  <Card title="LLM policies" icon="robot" href="/guides/llm-policies">
+    Swap in an LLM or a LangGraph agent.
+  </Card>
+</CardGroup>

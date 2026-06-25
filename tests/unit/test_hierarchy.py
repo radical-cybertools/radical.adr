@@ -12,6 +12,7 @@ Covers the SPAWN_OPERATOR / ChildHandle / add_child surface:
 """
 
 import json
+import logging
 import warnings
 
 import pytest
@@ -91,6 +92,28 @@ def test_status_pending_default_when_uid_unknown_in_runtime():
     p = _parent()
     p._child_starts["explorer"] = "uid-1"
     assert p.child("explorer").status == "PENDING"
+
+
+# ── ChildHandle.started ──────────────────────────────────────────────────────
+
+def test_started_false_before_spawn():
+    p = _parent()
+    assert p.child("explorer").started is False
+
+
+def test_started_true_after_start_recorded():
+    p = _parent()
+    p._child_starts["explorer"] = "uid-1"
+    assert p.child("explorer").started is True
+
+
+def test_started_true_in_terminal_states():
+    # started stays True for DONE / FAILED / CANCELED — "ever started", not "live".
+    p = _parent()
+    p._child_starts["explorer"] = "uid-1"
+    for terminal in ("DONE", "FAILED", "CANCELED"):
+        p.state.runtime["uid-1"] = terminal
+        assert p.child("explorer").started is True
 
 
 # ── ChildHandle metric reads ─────────────────────────────────────────────────
@@ -236,3 +259,109 @@ def test_add_child_seeds_annotated_attr_into_objectives():
     p = _parent()
     child = p.add_child("refiner_0", _Child, radius=0.3)
     assert child.state.objectives["radius"] == 0.3
+
+
+def test_add_child_records_initial_config_for_restart():
+    p = _parent()
+    p.add_child("refiner_0", _Child, radius=0.3, center=2.5)
+    assert p._child_config["refiner_0"] == {"radius": 0.3, "center": 2.5}
+
+
+# ── restart_operator / cancel_operator builders ──────────────────────────────
+
+def test_restart_operator_builds_action():
+    p = _parent()
+    a = p.get_actions().restart_operator("refiner_0", depends_on="explorer")
+    assert a.kind == ActionKind.RESTART_OPERATOR
+    assert a.task_name == "refiner_0"
+    assert a.depends_on == ["explorer"]            # single name normalized to a list
+
+
+def test_restart_operator_depends_on_list():
+    p = _parent()
+    a = p.get_actions().restart_operator("merge", depends_on=["refiner_0", "refiner_1"])
+    assert a.depends_on == ["refiner_0", "refiner_1"]
+
+
+def test_cancel_operator_builds_action():
+    p = _parent()
+    a = p.get_actions().cancel_operator("refiner_0")
+    assert a.kind == ActionKind.CANCEL_OPERATOR
+    assert a.task_name == "refiner_0"
+
+
+# ── spawn_operator idempotency (no-op + warning) ─────────────────────────────
+
+async def test_spawn_operator_noop_when_already_started(caplog):
+    p = _parent()
+    p.add_child("explorer", _Child)
+    p._child_starts["explorer"] = "uid-1"          # simulate "already started"
+    p.state.runtime["uid-1"] = "RUNNING"
+    a = Action(kind=ActionKind.SPAWN_OPERATOR, task_name="explorer")
+    with caplog.at_level(logging.WARNING):
+        result = await p._spawn_operator(a)
+    assert result is None                          # no-op → no new launch
+    assert "no-op" in caplog.text
+    assert p._child_starts["explorer"] == "uid-1"  # untouched
+
+
+async def test_cancel_operator_noop_when_unstarted(caplog):
+    p = _parent()
+    p.add_child("explorer", _Child)                # registered but never started
+    a = Action(kind=ActionKind.CANCEL_OPERATOR, task_name="explorer")
+    with caplog.at_level(logging.WARNING):
+        await p._cancel_operator(a)
+    assert "no-op" in caplog.text
+
+
+# ── _reset_run_state (restart's wipe-to-initial-config) ──────────────────────
+
+def test_reset_run_state_restores_initial_config():
+    p = _parent()
+    child = p.add_child("refiner_0", _Child, radius=0.3)   # initial radius=0.3
+    # Evolve the child's state, then reset.
+    child.radius = 9.9
+    child.state.cycle = 7
+    child.state.runtime["x"] = "DONE"
+    p._reset_run_state("refiner_0")
+    assert child.radius == 0.3            # back to the seeded config
+    assert child.state.cycle == 0         # fresh RuntimeState
+    assert child.state.runtime == {}
+    assert child._block_factory is None   # next start() rebuilds the block
+
+
+# ── _validate_actions: restart / cancel ──────────────────────────────────────
+
+def test_validate_restart_unknown_child_raises():
+    p = _parent()
+    a = Action(kind=ActionKind.RESTART_OPERATOR, task_name="ghost")
+    with pytest.raises(ActionError, match="unknown child"):
+        p._validate_actions([a])
+
+
+def test_validate_restart_registered_child_ok():
+    p = _parent()
+    p.add_child("explorer", _Child)
+    a = Action(kind=ActionKind.RESTART_OPERATOR, task_name="explorer")
+    p._validate_actions([a])
+
+
+def test_validate_restart_requires_task_name():
+    p = _parent()
+    a = Action(kind=ActionKind.RESTART_OPERATOR)
+    with pytest.raises(ActionError, match="task_name"):
+        p._validate_actions([a])
+
+
+def test_validate_cancel_unknown_child_does_not_raise():
+    # cancel is safe / idempotent — unknown name validates (no-op logged at apply).
+    p = _parent()
+    a = Action(kind=ActionKind.CANCEL_OPERATOR, task_name="ghost")
+    p._validate_actions([a])
+
+
+def test_validate_cancel_requires_task_name():
+    p = _parent()
+    a = Action(kind=ActionKind.CANCEL_OPERATOR)
+    with pytest.raises(ActionError, match="task_name"):
+        p._validate_actions([a])
