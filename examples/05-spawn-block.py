@@ -14,12 +14,14 @@ Usage:
 from __future__ import annotations
 
 import asyncio
+import logging
 import random
 from concurrent.futures import ProcessPoolExecutor
 
 from radical.asyncflow import LocalExecutionBackend, WorkflowEngine
 
 from radical.adr import Decision, Operator, Policy, decide, goals, observe, act
+from radical.adr import enable_logging
 from radical.adr.goals import Goal
 
 CANDIDATES = [f"mol_{i:04d}" for i in range(30)]
@@ -112,4 +114,5 @@ async def main():
 
 
 if __name__ == "__main__":
+    enable_logging(logging.INFO)
     asyncio.run(main())

@@ -11,10 +11,20 @@ Six validated gaps from downstream (Campaign Manager) integration feedback, each
 assessed against source and landed as small, additive changes, plus first-class child
 operators (`SPAWN_OPERATOR` / `add_child` / `ChildHandle`) with declarative,
 runtime-owned lifecycle verbs (idempotent `spawn_operator`, `restart_operator`,
-`cancel_operator`). Full suite: 91 passing.
+`cancel_operator`), plus user-facing `enable_logging(...)`. Full suite: 99 passing.
 
 ### Added
 
+- **User-facing logging** — new `enable_logging(...)` (exported from the package root) sets up
+  leveled, human-readable narration of the Observe→Decide→Act loop under the `radical.adr`
+  namespace. **INFO** gives a one-line decision summary per cycle plus operator start /
+  goal-satisfied stop / child spawn-restart-cancel / final-stop milestones; **DEBUG** adds
+  per-action and per-task detail; the existing WARNING/exception sites are unchanged.
+  Format-compatible with AsyncFlow and RHAPSODY (same pipe-delimited line, `propagate=False` so ADR
+  logs never duplicate and survive a sibling reconfiguring root), with an opt-in
+  `configure_stack=True` to configure the whole stack at one level in a single call. Programmatic
+  only (no env vars); no structured/JSON output — logging is a side channel and never flows through
+  `state`/`snapshot`/`@observe` (use a `RecordingObserver` for structured per-cycle data).
 - **First-class child operators** — child operators are now composed without runtime
   plumbing. New `ActionKind.SPAWN_OPERATOR` + `acts.spawn_operator(name, OperatorCls,
   policy=…, depends_on=[names], **config)` *register-or-reuse then launch* a child as a

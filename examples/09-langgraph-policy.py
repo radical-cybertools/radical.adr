@@ -24,6 +24,7 @@ Dependencies:
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import random
 from concurrent.futures import ThreadPoolExecutor
@@ -37,6 +38,7 @@ from pydantic import BaseModel, Field
 from radical.asyncflow import LocalExecutionBackend, WorkflowEngine
 
 from radical.adr import Decision, LLMPolicy, Operator, act, decide, goals, observe
+from radical.adr import enable_logging
 from radical.adr.goals import Goal
 
 TARGET     = 3.14159
@@ -232,4 +234,5 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
+    enable_logging(logging.INFO)
     asyncio.run(main())

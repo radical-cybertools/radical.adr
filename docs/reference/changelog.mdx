@@ -12,9 +12,15 @@ current unreleased work is summarized below.
 
 Six validated gaps from downstream (Campaign Manager) integration feedback, plus first-class child
 operators (`SPAWN_OPERATOR` / `add_child` / `ChildHandle`) with declarative, runtime-owned lifecycle
-verbs. Full suite: 91 passing.
+verbs, plus user-facing `enable_logging(...)`. Full suite: 99 passing.
 
 ### Added
+
+- **User-facing logging** — `enable_logging(...)` sets up leveled INFO/DEBUG narration of the
+  Observe→Decide→Act loop under the `radical.adr` namespace. Format-compatible with AsyncFlow and
+  RHAPSODY (shared pipe format, `propagate=False` so ADR logs never duplicate), with an opt-in
+  `configure_stack=True` to configure the whole stack in one call. Programmatic only; no
+  structured/JSON output. See [Logging & observability](/guides/logging-and-observability).
 
 - **First-class child operators** — composed without runtime plumbing.
   `acts.spawn_operator(name, OperatorCls, policy=…, depends_on=[names], **config)` register-or-reuse

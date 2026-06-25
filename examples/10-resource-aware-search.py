@@ -23,6 +23,7 @@ Usage:
 from __future__ import annotations
 
 import asyncio
+import logging
 import random
 import sys
 from concurrent.futures import ProcessPoolExecutor
@@ -30,6 +31,7 @@ from concurrent.futures import ProcessPoolExecutor
 from radical.asyncflow import LocalExecutionBackend, WorkflowEngine
 
 from radical.adr import Decision, Operator, act, decide, goals, observe
+from radical.adr import enable_logging
 from radical.adr.goals import Goal
 from radical.adr.policy.base import Policy
 
@@ -232,6 +234,7 @@ async def main_local() -> None:
 
 
 if __name__ == "__main__":
+    enable_logging(logging.INFO)
     if "--local" in sys.argv:
         asyncio.run(main_local())
     else:

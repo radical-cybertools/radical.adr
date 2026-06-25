@@ -25,6 +25,7 @@ Usage:
 from __future__ import annotations
 
 import asyncio
+import logging
 import pickle
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
@@ -39,6 +40,7 @@ from rose.al import SequentialActiveLearner
 from rose.metrics import MEAN_SQUARED_ERROR_MSE
 
 from radical.adr import Decision, Operator, Policy, decide, goals, observe, act
+from radical.adr import enable_logging
 from radical.adr.goals import Goal
 
 # ── Shared state (module-level because @act impls take no self) ──────────────
@@ -207,4 +209,5 @@ async def main():
 
 
 if __name__ == "__main__":
+    enable_logging(logging.INFO)
     asyncio.run(main())

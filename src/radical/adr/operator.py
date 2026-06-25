@@ -162,6 +162,7 @@ def _deliver_task_event(
         payload = {"uid": uid, "state": "FAILED", "error": exc}
     else:
         payload = {"uid": uid, "state": "DONE", "result": future.result()}
+    log.debug("task uid=%s -> %s", uid, payload["state"])
     inbox.put_nowait(InboxMessage(
         kind      = MessageKind.TASK_EVENT,
         sender_id = "asyncflow",
@@ -433,6 +434,9 @@ class Operator:
         runtime: list = object.__getattribute__(self, "_runtime_goals")
         all_goals = static + runtime
         if all_goals and all(g.satisfied(obs, snapshot) for g in all_goals):
+            if not decision.stop:
+                log.info("cycle %d: all %d goals satisfied -> stopping",
+                         self.state.cycle, len(all_goals))
             decision.stop = True
 
     def _apply_goal_changes(self, decision: Decision) -> None:
@@ -554,9 +558,13 @@ class Operator:
         if self.observer is not None:
             self.observer.on_start(self.operator_id, {"objectives": self.state.objectives})
 
+        log.info("operator '%s' starting (max_cycles=%s)",
+                 self.operator_id, object.__getattribute__(self, "_max_cycles"))
+
         try:
             while not self._stop_event.is_set():
                 await self._drain_inbox()                           # 1. RUN
+                log.debug("cycle %d: drained inbox", self.state.cycle)
 
                 snapshot   = self.state.snapshot()
                 observe_fn = type(self)._adl_observe_fn             # 2. OBSERVE
@@ -573,6 +581,7 @@ class Operator:
                         f"{type(self).__name__} must return dict, "
                         f"got {type(obs).__name__}"
                     )
+                log.debug("cycle %d: observed %d keys", self.state.cycle, len(obs))
 
                 try:
                     decision = await self._decide(obs)              # 3. DECIDE
@@ -583,6 +592,10 @@ class Operator:
 
                 self._check_goals(obs, snapshot, decision)
                 self._apply_goal_changes(decision)
+
+                log.info("cycle %d: decision — %d actions, %d goal proposals, stop=%s",
+                         self.state.cycle, len(decision.actions),
+                         len(decision.goals), decision.stop)
 
                 if self.observer is not None:
                     self.observer.on_cycle(snapshot, obs, decision)
@@ -611,8 +624,10 @@ class Operator:
                     future.cancel()
 
             final_snap = self.state.snapshot() if self.state.cycle > 0 else None
+            reason = "stop" if self._stop_event.is_set() else "shutdown"
+            log.info("operator '%s' stopped after %d cycles (reason=%s)",
+                     self.operator_id, self.state.cycle, reason)
             if self.observer is not None:
-                reason = "stop" if self._stop_event.is_set() else "shutdown"
                 self.observer.on_stop(final_snap, reason)
 
     async def run_to_completion(self) -> Snapshot | None:
@@ -895,11 +910,14 @@ class Operator:
         self.state.task_futures[uid] = result
         self.state.runtime[uid]      = "PENDING"
         self.state.task_context[uid] = {"name": name, "kwargs": kwargs}
+        log.debug("spawned '%s' uid=%s", name, uid)
         result.add_done_callback(
             lambda fut, _uid=uid: _deliver_task_event(fut, _uid, self.inbox)
         )
 
     async def _apply_one(self, act: Action) -> None:
+        log.debug("cycle %d: apply %s '%s'",
+                  self.state.cycle, act.kind, act.task_name or act.target_uid or act.param_key)
         if act.kind in (ActionKind.SPAWN_TASK, ActionKind.SPAWN_BLOCK):
             if act.task_name is None:
                 raise ActionError(f"{act.kind}: task_name is required")
@@ -987,6 +1005,7 @@ class Operator:
             child = self.add_child(name, act.operator_cls, policy=act.policy,
                                    **act.task_kwargs)
 
+        log.info("operator '%s': spawning child operator '%s'", self.operator_id, name)
         fut = child.start(*self._resolve_child_deps(act.depends_on))
         self._child_starts[name] = str(getattr(fut, "id", id(fut)))
         return fut
@@ -1043,6 +1062,7 @@ class Operator:
         self._reset_run_state(name)
         self._child_starts.pop(name, None)
 
+        log.info("operator '%s': restarting child operator '%s'", self.operator_id, name)
         fut = child.start(*self._resolve_child_deps(act.depends_on))
         self._child_starts[name] = str(getattr(fut, "id", id(fut)))
         return fut
@@ -1067,6 +1087,7 @@ class Operator:
             )
             return
         if not fut.done():
+            log.info("operator '%s': cancelling child operator '%s'", self.operator_id, name)
             fut.cancel()   # done-callback delivers CANCELED
 
     # ── Dispatch ─────────────────────────────────────────────────────────────

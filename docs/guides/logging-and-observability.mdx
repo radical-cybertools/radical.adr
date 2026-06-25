@@ -52,38 +52,74 @@ The resulting trace drives the HTML replay dashboards in `examples/demo/` —
 *different* policy against it offline. It has its own guide:
 [Record & replay](/guides/record-and-replay).
 
-## Standard logging — anomalies only
+## Standard logging — narrate the cycle
 
-ADR uses Python's `logging` module with a per-module logger (`log = logging.getLogger(__name__)`),
-and — by convention — reserves it for **anomalies**: warnings and exceptions, not a play-by-play
-narration. The current call sites are:
-
-- `spawn_operator` on an already-started child → `WARNING` (the idempotent no-op).
-- `cancel_operator` on a child that never started → `WARNING` (the no-op).
-- A composed policy's primary timing out → `WARNING`; raising → `log.exception(...)` before falling
-  back.
-- An MCP tool call failing → `log.exception(...)`.
-
-Enable it like any stdlib logging:
+ADR uses Python's stdlib `logging` with per-module loggers under the **`radical.adr`** namespace
+(`log = logging.getLogger(__name__)`). One call sets it up:
 
 ```python
 import logging
-logging.basicConfig(level=logging.WARNING)
-logging.getLogger("radical.adr").setLevel(logging.WARNING)
+from radical.adr import enable_logging
+
+enable_logging(logging.INFO)    # follow the cycle; use logging.DEBUG for per-action detail
 ```
 
-If you want a continuous picture of *what the operator decided each cycle*, reach for an observer —
-that is the channel designed for it. Logging tells you when something went sideways; observers tell
-you the whole story.
+```text
+2026-06-25 20:25:20 | INFO     | [radical.adr.operator] | operator 'Op' starting (max_cycles=None)
+2026-06-25 20:25:21 | INFO     | [radical.adr.operator] | cycle 0: decision — 1 actions, 0 goal proposals, stop=False
+2026-06-25 20:25:21 | INFO     | [radical.adr.operator] | cycle 3: all 1 goals satisfied -> stopping
+2026-06-25 20:25:21 | INFO     | [radical.adr.operator] | operator 'Op' stopped after 4 cycles (reason=stop)
+```
+
+### What each level shows
+
+| Level | What you get |
+|---|---|
+| **INFO** | Lifecycle milestones — operator start, a one-line **decision summary per cycle** (actions / goal proposals / stop), goal-satisfied stop, child spawn / restart / cancel, final stop with reason. |
+| **DEBUG** | Per-message / per-action detail — inbox drains, observation key counts, each action applied, each task spawn, and task settle events (`uid -> DONE/FAILED/CANCELED`). |
+| **WARNING / exception** | Anomalies only — idempotent `spawn_operator` / `cancel_operator` no-ops, a composed policy's primary timing out or raising, and MCP tool failures. |
+
+### Options
+
+```python
+enable_logging(
+    logging.DEBUG,
+    output_file="run.log",       # also log to a file (ANSI colors stripped)
+    use_colors=True,             # color the level name on a TTY console
+    show_details=False,          # add process/thread info per line
+    configure_stack=False,       # see below
+)
+```
+
+### Compatible with AsyncFlow and RHAPSODY
+
+ADR's format string is the **same pipe-delimited line** AsyncFlow and RHAPSODY use, so all three
+projects' logs interleave uniformly and stay filterable by namespace (`radical.adr`,
+`radical.asyncflow`, `rhapsody`). Like RHAPSODY, ADR configures its own namespace logger with
+`propagate=False`, so its lines are never duplicated and survive a sibling reconfiguring the root
+logger.
+
+Pass `configure_stack=True` to configure the **whole stack** at one level in a single call:
+
+```python
+enable_logging(logging.INFO, configure_stack=True)   # ADR + AsyncFlow + (if installed) RHAPSODY
+```
+
+<Note>
+Logging is a **side channel** — it never flows through `state`, `snapshot`, or `@observe`, and is
+independent of the Observer channel. For structured, machine-readable per-cycle data (recording,
+dashboards, offline replay), use an observer — that is the channel designed for it.
+</Note>
 
 ## Choosing a channel
 
 | You want… | Use |
 |---|---|
+| Human-readable narration of the cycle | stdlib `logging` via `enable_logging(...)` |
 | Per-cycle decisions, tasks, goals — structured | An **observer** (`on_cycle`) |
 | A visual timeline / graph of a run | `JsonlObserver` + the demo dashboards |
 | Offline A/B of policies on a recorded run | `RecordingObserver` + [`replay_trace`](/guides/record-and-replay) |
-| A heads-up when something anomalous happens | stdlib `logging` at `WARNING` |
+| A heads-up when something anomalous happens | `logging` at `WARNING` |
 
 ## Next
 

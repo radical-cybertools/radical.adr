@@ -82,6 +82,29 @@ decisions = await replay_trace(path, candidate_policy)
 Re-drives a different policy against a recorded `obs` sequence — offline, open-loop (reads only the
 recorded `obs`). See [Record & replay](/guides/record-and-replay).
 
+## Logging
+
+### `enable_logging`
+
+```python
+enable_logging(
+    level=logging.INFO,
+    *,
+    output_file=None,      # also write to this file (ANSI colors stripped)
+    file_level=None,       # defaults to `level`
+    use_colors=True,       # color the level name on a TTY console
+    show_details=False,    # add process/thread info per line
+    stream=None,           # default sys.stderr
+    configure_stack=False, # also configure AsyncFlow + RHAPSODY at the same level
+) -> logging.Logger
+```
+
+Configures the `radical.adr` namespace logger for user-facing INFO/DEBUG narration of the
+Observe → Decide → Act loop. Sets `propagate=False` so ADR logs are never duplicated and survive a
+sibling reconfiguring the root logger. Uses the same pipe-delimited format as AsyncFlow and RHAPSODY.
+See [Logging & observability](/guides/logging-and-observability). Logging is a side channel — it never
+flows through `state`, `snapshot`, or `@observe`.
+
 ## See also
 
 - [api-operator](/reference/api-operator) · [errors](/reference/errors) ·

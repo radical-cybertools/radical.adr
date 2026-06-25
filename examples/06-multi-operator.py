@@ -14,12 +14,14 @@ Usage:
 from __future__ import annotations
 
 import asyncio
+import logging
 import random
 from concurrent.futures import ProcessPoolExecutor
 
 from radical.asyncflow import LocalExecutionBackend, WorkflowEngine
 
 from radical.adr import Decision, Operator, Policy, decide, goals, observe, act
+from radical.adr import enable_logging
 from radical.adr.goals import Goal
 
 TARGET     = 3.14159
@@ -120,4 +122,5 @@ async def main():
 
 
 if __name__ == "__main__":
+    enable_logging(logging.INFO)
     asyncio.run(main())

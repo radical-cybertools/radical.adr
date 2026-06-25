@@ -61,6 +61,7 @@ from radical.adr.errors import ADLError
 from radical.adr.errors import PolicyError
 from radical.adr.errors import RegistryError
 from radical.adr.goals import Goal
+from radical.adr.logging import enable_logging
 from radical.adr.message import InboxMessage
 from radical.adr.message import MessageBus
 from radical.adr.message import MessageKind
@@ -111,6 +112,8 @@ __all__ = [
     "ObserverBase",
     "RecordingObserver",
     "replay_trace",
+    # Logging
+    "enable_logging",
     # Errors
     "ADLError",
     "PolicyError",

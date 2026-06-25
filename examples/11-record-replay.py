@@ -19,6 +19,7 @@ Usage:
 """
 
 import asyncio
+import logging
 import tempfile
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
@@ -34,6 +35,7 @@ from radical.adr import (
     observe,
     replay_trace,
 )
+from radical.adr import enable_logging
 
 
 class SearchOperator(Operator):
@@ -108,4 +110,5 @@ async def main():
 
 
 if __name__ == "__main__":
+    enable_logging(logging.INFO)
     asyncio.run(main())
