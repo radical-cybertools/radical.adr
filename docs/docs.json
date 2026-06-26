@@ -38,6 +38,7 @@
               "concepts/decorators",
               "concepts/state-and-snapshots",
               "concepts/decisions-and-actions",
+              "concepts/built-in-actions",
               "concepts/goals",
               "concepts/policies"
             ]

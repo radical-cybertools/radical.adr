@@ -64,6 +64,7 @@ RHAPSODY owns task execution. Everything in ADR is *steering*, never *running*. 
 | [`@goals`](/concepts/goals) | Convergence criteria. The operator stops automatically when **all** goals are satisfied. |
 | [`Policy` / `@decide`](/concepts/policies) | Decision logic. Receives the observation dict, returns a `Decision`. Swap it without touching the operator. |
 | [`Decision`](/concepts/decisions-and-actions) | What to do this cycle: spawn tasks, cancel tasks, update state, spawn/restart/cancel child operators, or stop. |
+| [Built-in actions](/concepts/built-in-actions) | The fixed verb set every operator exposes (`spawn_task`, `spawn_operator`, `update_param`, `stop`, …) — each explained one by one. |
 
 ---
 

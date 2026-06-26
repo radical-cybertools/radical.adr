@@ -1,0 +1,227 @@
+---
+title: "Built-in Actions"
+description: "Every action an operator exposes out of the box — what each one is and exactly what it does."
+---
+
+A policy never touches the runtime directly. It returns a [`Decision`](/concepts/decisions-and-actions)
+built from **actions**, and the operator applies them. Every operator exposes a fixed set of
+**built-in actions** through its [`ActionSet`](/concepts/decisions-and-actions#the-actionset)
+(`op.get_actions()`), plus one **shorthand per `@act` method** you define. This page documents the
+built-ins one by one — what each is, what it does, when to reach for it, and the gotcha that bites
+people.
+
+```python
+acts = op.get_actions()    # the ActionSet a policy holds
+```
+
+<Note>
+Built-in actions are **always present** on every operator. The `@act` shorthands
+(`acts.evaluate(...)`) are **operator-specific** — they exist only for the `@act` methods that
+particular operator defines. Both produce the same `SPAWN_TASK` action; see
+[Task shorthands](#act-shorthands-operator-specific) below.
+</Note>
+
+## At a glance
+
+| Action | Kind | One-line effect |
+|---|---|---|
+| [`spawn_task(name, …)`](#spawn-task) | `SPAWN_TASK` | Run a registered `@act` by name. |
+| [`spawn_workflow(name, …)`](#spawn-workflow) | `SPAWN_TASK` | Same as `spawn_task`; names intent (an `@act` returning a block). |
+| [`cancel_task(uid)`](#cancel-task) | `CANCEL_TASK` | Cancel a running/pending task by UID. |
+| [`spawn_operator(name, …)`](#spawn-operator) | `SPAWN_OPERATOR` | Launch a child operator (idempotent). |
+| [`restart_operator(name, …)`](#restart-operator) | `RESTART_OPERATOR` | Re-run a child from its initial config. |
+| [`cancel_operator(name)`](#cancel-operator) | `CANCEL_OPERATOR` | Cancel a child's in-flight run. |
+| [`update_param(key, value)`](#update-param) | `UPDATE_PARAM` | Write a value into operator objectives. |
+| [`stop()`](#stop) | — | Return a `Decision(stop=True)`. |
+
+---
+
+## Task actions
+
+### `spawn_task`
+
+```python
+acts.spawn_task(name: str, depends_on: list[str] | None = None, **kwargs) -> Action
+```
+
+**What it does.** Looks up the `@act` method called `name`, `await`s it with `**kwargs`, and routes
+the return (a `Future` → tracked async task; a plain value → local result; `None` → no-op). This is
+the workhorse — almost every cycle emits one or more `spawn_task`s.
+
+**`depends_on`.** A list of **task UIDs** that must be `DONE` first. The runtime resolves them to live
+futures and passes them as positional args to the `@act` method, so you get native DAG chaining
+without ever holding a `Future`.
+
+```python
+uid = ...  # a task UID observed from a previous cycle
+acts.spawn_task("refine", depends_on=[uid], strength=0.5)
+```
+
+**Gotcha.** The result is **not** available this cycle — it lands in the next cycle's `@observe`
+(the [one-cycle latency](/concepts/the-cycle#the-one-cycle-latency)). Don't spawn a task and expect
+to read its result in the same `Decision`.
+
+### `@act` shorthands (operator-specific)
+
+```python
+acts.evaluate(x=1.0, seed=3)     # ⇢ spawn_task("evaluate", x=1.0, seed=3)
+```
+
+For every `@act` method on the operator, the `ActionSet` exposes a same-named callable that builds a
+`SPAWN_TASK` for it. It accepts the method's kwargs plus an optional `depends_on=`. This is the most
+readable way to spawn your own tasks; `spawn_task("evaluate", …)` is the explicit equivalent.
+
+**Gotcha.** Calling a name that is not a registered `@act` raises `AttributeError` — these shorthands
+exist only for methods decorated with [`@act`](/concepts/decorators#act-a-capability).
+
+### `spawn_workflow`
+
+```python
+acts.spawn_workflow(name: str, depends_on: list[str] | None = None, **kwargs) -> Action
+```
+
+**What it does.** Exactly the same as `spawn_task` (it produces a `SPAWN_TASK`). It exists only to
+**signal intent**: use it when the `@act` you're invoking returns an `engine.block(...)` Future that
+orchestrates several sub-tasks, rather than a single task. Functionally interchangeable with
+`spawn_task`; pick the name that reads truthfully. See [`05-spawn-block.py`](https://github.com/radical-cybertools/radical.adr/blob/main/examples/05-spawn-block.py).
+
+### `cancel_task`
+
+```python
+acts.cancel_task(uid: str) -> Action
+```
+
+**What it does.** Calls `future.cancel()` on the tracked task with that UID. The task then settles as
+`CANCELED` and surfaces in the next cycle's state.
+
+**Gotcha.** It needs the **UID**, which you get from observed state (e.g. a `result.{uid}` /
+`runtime` key), not from the action that spawned it — the policy doesn't keep futures. An unknown UID
+raises `ActionError` during [pre-flight validation](/concepts/decisions-and-actions#pre-flight-validation).
+
+---
+
+## Child-operator actions
+
+These steer **child operators** (declared with `add_child`). They are the *only* lifecycle controls
+— and they are runtime-owned, declarative verbs: the intent lives in the verb, not in a flag. See
+[Hierarchical operators](/guides/hierarchical-operators) for the full pattern.
+
+### `spawn_operator`
+
+```python
+acts.spawn_operator(
+    name: str,
+    operator_cls=None,
+    *,
+    policy=None,
+    depends_on: str | list[str] | None = None,
+    **config,
+) -> Action
+```
+
+**What it does.** "Ensure this child is launched." Registers the child on first use (instantiates
+`operator_cls`, wires `parent=self`, attaches `policy`, seeds `**config` as its objectives) and
+starts it as a block. `operator_cls` is required the first time a `name` is used; on a re-spawn of an
+already-registered child it may be omitted. `policy` may be a `Policy` instance or a class/factory
+called with the child.
+
+**`depends_on`.** Upstream child **names** (not UIDs) — a single name or a list — whose completion
+gates this launch. The name→Future resolution is internal.
+
+```python
+acts.spawn_operator("explorer")                                   # launch a declared child
+acts.spawn_operator("refiner_0", SearchOperator, policy=SearchPolicy,
+                    depends_on="explorer", center=3.1)            # register + launch, gated
+```
+
+**Gotcha — idempotent.** Once a child has *ever* been started (including terminal
+`DONE`/`FAILED`/`CANCELED`), re-emitting `spawn_operator` is a **no-op + a logged warning**. This is
+the runtime-owned spawn-once guarantee — well-written policies gate on `child.started` so they never
+hit the warning. To run it *again*, use [`restart_operator`](#restart-operator).
+
+### `restart_operator`
+
+```python
+acts.restart_operator(name: str, *, depends_on: str | list[str] | None = None) -> Action
+```
+
+**What it does.** Forces a fresh run of an already-registered child: cancels any in-flight run, resets
+the child to its **initial** declared config (the kwargs captured by `add_child` / first
+`spawn_operator`), and re-launches. Unlike `spawn_operator`, it is **not** idempotent — it always
+starts a new run.
+
+**Gotcha.** The child must already be registered, or it raises `ActionError` ("unknown child; spawn
+it first"). Restart replays the *initial* config, not the child's evolved state — a child that had
+drifted to `radius=0.01` restarts at its declared `radius`.
+
+### `cancel_operator`
+
+```python
+acts.cancel_operator(name: str) -> Action
+```
+
+**What it does.** Cancels the child's block Future (propagating to its spawned tasks); the child then
+shows `CANCELED`. The name stays known to the runtime.
+
+**Gotcha.** Because the name stays known, a later `spawn_operator` on it is **still a no-op** —
+re-running after a cancel is [`restart_operator`](#restart-operator)'s job. Cancelling a child that
+never started (or already finished) is a **logged no-op**, not an error.
+
+---
+
+## State & control actions
+
+### `update_param`
+
+```python
+acts.update_param(key: str, value) -> Action
+```
+
+**What it does.** Writes `state.objectives[key] = value`. The new value is visible next cycle via
+`snapshot.objectives.get(key)` **and** via the attribute proxy `self.key` (if `key` is an annotated
+operator attribute). This is how a policy evolves operator state — shrinking a `radius`, advancing a
+`center`, appending to a `history`.
+
+```python
+acts.update_param("radius", obs["radius"] * 0.5)
+```
+
+**Gotcha.** It writes to `objectives` (persistent), **not** to `observations` (per-cycle). It is the
+sanctioned way to mutate operator state from a policy — never reach into `state` directly.
+
+### `stop`
+
+```python
+acts.stop() -> Decision      # note: returns a Decision, not an Action
+```
+
+**What it does.** Returns a `Decision(stop=True)` — the operator finishes cleanly after the current
+cycle (the cycle's other actions still apply). Use it for an explicit, policy-driven stop.
+
+**Gotcha.** It returns a **`Decision`**, not an `Action`, so it cannot go inside a `Decision(actions=[…])`
+list — return it directly, or set `stop=True` on the `Decision` you build. In most workflows you
+don't call it at all: the operator stops **autonomously** when its [goals](/concepts/goals) are
+satisfied. Reach for `stop()` only for non-goal stop conditions (a safety cap, an external signal).
+
+---
+
+## Not an action: `get_schema`
+
+```python
+op.get_actions().get_schema("openai")   # | "anthropic" | "langgraph"
+```
+
+`get_schema` is not an action — it renders every `@act` method's signature and docstring as
+vendor tool-call schemas, so an LLM policy is offered exactly the operator's real capabilities. See
+[LLM policies](/guides/llm-policies#tool-schemas-for-free).
+
+## Next
+
+<CardGroup cols={2}>
+  <Card title="Decisions & Actions" icon="list-check" href="/concepts/decisions-and-actions">
+    How actions are packaged into a Decision and applied.
+  </Card>
+  <Card title="API · Decision & Actions" icon="book" href="/reference/api-decision">
+    The terse signature reference for every verb.
+  </Card>
+</CardGroup>
