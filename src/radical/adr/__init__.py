@@ -60,6 +60,8 @@ from radical.adr.errors import ActionError
 from radical.adr.errors import ADLError
 from radical.adr.errors import PolicyError
 from radical.adr.errors import RegistryError
+from radical.adr.goals import AllGoal
+from radical.adr.goals import AnyGoal
 from radical.adr.goals import Goal
 from radical.adr.logging import enable_logging
 from radical.adr.message import InboxMessage
@@ -97,6 +99,8 @@ __all__ = [
     "ActionKind",
     # Goals
     "Goal",
+    "AnyGoal",
+    "AllGoal",
     # Messages
     "InboxMessage",
     "MessageKind",

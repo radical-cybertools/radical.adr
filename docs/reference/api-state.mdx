@@ -76,11 +76,13 @@ RecordingObserver(path)   # captures per-cycle obs (+ decision) to JSONL
 ### `replay_trace`
 
 ```python
-decisions = await replay_trace(path, candidate_policy)
+decisions = await replay_trace(path, candidate_policy, operators=None)
 ```
 
 Re-drives a different policy against a recorded `obs` sequence — offline, open-loop (reads only the
-recorded `obs`). See [Record & replay](/guides/record-and-replay).
+recorded `obs`). `operators={name: OperatorClass}` (optional) back-fills `operator_cls` on
+`SPAWN_OPERATOR` decisions so hierarchical policies replay cleanly. See
+[Record & replay](/guides/record-and-replay).
 
 ## Logging
 

@@ -20,6 +20,7 @@ A dataclass. Satisfied when `obs[metric]` crosses `threshold`.
 | `threshold` | `float` | — | Boundary value. |
 | `direction` | `str` | `"minimize"` | `"minimize"` → satisfied when `value < threshold`; `"maximize"` → `value > threshold`. |
 | `inclusive` | `bool` | `False` | `True` flips to `<=` / `>=`. |
+| `for_cycles` | `int` | `1` | Must hold this many consecutive cycles to count as met (debounce). |
 
 ### `satisfied(obs, snapshot) -> bool`
 
@@ -38,6 +39,17 @@ Goal(name="converged", metric="radius", threshold=0.005, direction="minimize")
 # maximize, inclusive: fires at exactly 5 hits
 Goal(name="hits", metric="n_hits", threshold=5, direction="maximize", inclusive=True)
 ```
+
+## `AnyGoal` / `AllGoal`
+
+```python
+AnyGoal(goals: list, name: str | None = None)   # satisfied when ANY member is (OR)
+AllGoal(goals: list, name: str | None = None)   # satisfied when ALL members are (explicit AND)
+```
+
+Composite goals with the same `.satisfied(obs, snapshot)` contract as `Goal`; members may be plain
+`Goal`s or nested groups. Imported from `radical.adr`. A bare list returned from `@goals` is implicit
+AND — `AllGoal` only differs by being composable inside an `AnyGoal`.
 
 ## Static vs runtime goals
 

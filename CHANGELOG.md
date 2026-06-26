@@ -11,10 +11,34 @@ Six validated gaps from downstream (Campaign Manager) integration feedback, each
 assessed against source and landed as small, additive changes, plus first-class child
 operators (`SPAWN_OPERATOR` / `add_child` / `ChildHandle`) with declarative,
 runtime-owned lifecycle verbs (idempotent `spawn_operator`, `restart_operator`,
-`cancel_operator`), plus user-facing `enable_logging(...)`. Full suite: 99 passing.
+`cancel_operator`), user-facing `enable_logging(...)`, and a 7-item API-hardening pass
+(task pruning, `retry_task`, `max_runtime`/`inflight`, `AnyGoal`/`AllGoal`/`for_cycles`, fuller LLM
+schema, hierarchical replay, checkpoint/resume). Full suite: 120 passing.
 
 ### Added
 
+- **API hardening (7 additive/opt-in items; no existing behavior changes unless opted in).**
+  - **Bounded task tracking** — terminal task Futures are now pruned from `state.task_futures`
+    (kept in a bounded `state.resolved` cache), so long campaigns no longer leak memory or slow
+    `_sync_running_states`. `depends_on` on a pruned task still resolves (the result is replayed as
+    a completed Future) — DAG chaining is unaffected.
+  - **`acts.retry_task(uid)`** (new `ActionKind.RETRY_TASK`) — re-spawn a finished/failed task from
+    its recorded `task_context` (same `@act` + kwargs, fresh uid). Policy-driven recovery.
+  - **`Operator(..., max_runtime=<seconds>)`** — opt-in wall-clock cap, a sibling to `max_cycles`;
+    plus a read-only **`Operator.inflight`** (PENDING+RUNNING count) to surface in `@observe` for
+    self-throttling. (A hard inflight cap was deliberately *not* added — it would drop spawns.)
+  - **`AnyGoal([...])` / `AllGoal([...])`** composite goals (OR / explicit AND, nestable) and
+    **`Goal(..., for_cycles=N)`** debounce (must hold N consecutive cycles). A bare `Goal`/list is
+    still implicit AND — unchanged.
+  - **`get_schema()` now renders `depends_on`** (optional) on every spawnable tool and the
+    child-operator lifecycle verbs + `retry_task` — closes the documented LLM-schema gap (G7).
+  - **`replay_trace(path, policy, operators={name: Cls})`** — hierarchical traces are now
+    replayable offline (the `operators` map back-fills `operator_cls` on `SPAWN_OPERATOR`
+    decisions). `operators=None` ⇒ unchanged.
+  - **`Operator.save_checkpoint(path)` / `load_checkpoint(path)`** — serialize/restore *steering*
+    state (cycle, objectives, runtime, task_context, runtime goals, goal streaks, child lifecycle
+    metadata) so a preempted campaign can resume. Live execution is not snapshotted (boundary-safe);
+    in-flight tasks are marked `LOST` for the resumed policy to `retry_task`.
 - **User-facing logging** — new `enable_logging(...)` (exported from the package root) sets up
   leveled, human-readable narration of the Observe→Decide→Act loop under the `radical.adr`
   namespace. **INFO** gives a one-line decision summary per cycle plus operator start /

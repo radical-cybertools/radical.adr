@@ -17,6 +17,7 @@ Operator(
     inbox_maxsize=0,
     observer=None,
     max_cycles=None,
+    max_runtime=None,
 )
 ```
 
@@ -32,6 +33,7 @@ objectives (proxied to `state.objectives`).
 | `inbox_maxsize` | `int` | `asyncio.Queue` max size (0 = unbounded). |
 | `observer` | `ObserverBase \| None` | Lifecycle observer. |
 | `max_cycles` | `int \| None` | Safety valve — force stop after N cycles. |
+| `max_runtime` | `float \| None` | Safety valve — force stop after N wall-clock seconds. |
 
 ### Methods
 
@@ -44,6 +46,8 @@ objectives (proxied to `state.objectives`).
 | `get_actions(format=None)` | `ActionSet` \| schema list | The operator's `ActionSet`; with `"openai"`/`"anthropic"`/`"langgraph"`, renders tool schemas. |
 | `add_child(name, OperatorCls, *, policy=…, **config)` | — | Declare a child operator. `policy=` accepts a `Policy` instance or a class/factory called with the child. |
 | `child(name)` | `ChildHandle` | Read-only handle to a declared child. |
+| `save_checkpoint(path)` | — | Serialize steering state (cycle, objectives, goals, task_context, child metadata) to JSON. |
+| `load_checkpoint(path)` | — | Restore steering state onto a freshly constructed operator, then `run()` to resume. |
 
 ### Attributes
 
@@ -53,6 +57,7 @@ objectives (proxied to `state.objectives`).
 | `engine` | The AsyncFlow engine. |
 | `policy` | The attached `Policy`. |
 | `cycle_history` | `list[Snapshot]` of previous completed cycles (read in `@observe`). |
+| `inflight` | `int` — count of tasks with status `PENDING` or `RUNNING`. Surface it in `@observe` (`"inflight": self.inflight`) to self-throttle, or target it with a `Goal`. |
 
 ## Decorators
 

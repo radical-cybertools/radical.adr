@@ -53,6 +53,7 @@
               "guides/llm-policies",
               "guides/record-and-replay",
               "guides/resource-aware-steering",
+              "guides/checkpointing",
               "guides/logging-and-observability"
             ]
           },

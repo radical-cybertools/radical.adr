@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import time
-from collections import deque
+from collections import OrderedDict, deque
 from typing import Any
 
 from pydantic import BaseModel
 
-_HISTORY_MAXLEN = 64
+_HISTORY_MAXLEN  = 64
+_RESOLVED_MAXLEN = 1024   # bounded cache of terminal task results (for depends_on)
 
 
 class Snapshot(BaseModel, frozen=True):
@@ -68,6 +69,22 @@ class RuntimeState:
 
         self.task_futures: dict[str, asyncio.Future]  = {}
         self.history: deque[Snapshot]                 = deque(maxlen=_HISTORY_MAXLEN)
+
+        # Terminal task results, kept after the live Future is pruned so that a
+        # later depends_on can still resolve. Bounded (FIFO) — see remember_resolved.
+        self.resolved: "OrderedDict[str, tuple[str, Any]]" = OrderedDict()
+
+    def remember_resolved(self, uid: str, status: str, value: Any) -> None:
+        """Cache a terminal task's result/error for later depends_on resolution.
+
+        ``status`` is ``DONE``/``FAILED``/``CANCELED``; ``value`` is the result,
+        the exception, or ``None``. Oldest entries are evicted past the cap — a
+        depends_on older than the window is implausible (history is 64 cycles).
+        """
+        self.resolved[uid] = (status, value)
+        self.resolved.move_to_end(uid)
+        while len(self.resolved) > _RESOLVED_MAXLEN:
+            self.resolved.popitem(last=False)
 
     # ── Snapshot ──────────────────────────────────────────────────────────────
 

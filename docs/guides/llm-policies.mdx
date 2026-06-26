@@ -60,6 +60,11 @@ capabilities, no hand-maintained schema:
 tools = op.get_actions().get_schema("openai")
 ```
 
+The schema also exposes an optional `depends_on` parameter on every spawnable tool (so the model can
+express task DAG dependencies) and the child-operator lifecycle verbs
+(`spawn_operator`/`restart_operator`/`cancel_operator`) plus `retry_task` — the LLM can drive ADR's
+full action surface, not just flat `@act` calls.
+
 ## Reliability: compose with a fallback
 
 A model call can fail, time out, or return garbage. Compose the LLM with a deterministic fallback so

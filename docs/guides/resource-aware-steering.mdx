@@ -17,8 +17,8 @@ A scientific convergence goal and a resource constraint sit side by side:
 @goals
 def criteria(self):
     return [
-        Goal(name="converged",  metric="radius",      threshold=MIN_RADIUS, direction="minimize"),
-        Goal(name="cpu_healthy", metric="cpu_percent", threshold=CPU_LIMIT,  direction="minimize"),
+        Goal(name="converged", metric="radius", threshold=MIN_RADIUS, direction="minimize"),
+        Goal(name="cpu_healthy", metric="cpu_percent", threshold=CPU_LIMIT, direction="minimize"),
     ]
 ```
 
@@ -35,8 +35,8 @@ subscription you update in `main()`, completely outside ADR:
 def extract(self, snapshot) -> dict:
     results = [v for k, v in snapshot.observations.items() if k.startswith("result.")]
     return {
-        "radius":      snapshot.objectives.get("radius", 5.0),
-        "results":     results,
+        "radius": snapshot.objectives.get("radius", 5.0),
+        "results": results,
         "cpu_percent": self.telemetry.cpu_percent,   # external source, your code owns it
     }
 ```
@@ -73,6 +73,26 @@ metric's origin differs. That is the source-agnostic property in action:
 python examples/10-resource-aware-search.py           # real ConcurrentExecutionBackend
 python examples/10-resource-aware-search.py --local   # simulated CPU, no RHAPSODY
 ```
+
+## Throttle on in-flight load with `inflight`
+
+Resource pressure isn't only external — you may want to cap how much work *this operator* has in
+flight. The read-only `Operator.inflight` property (count of `PENDING` + `RUNNING` tasks) is built in;
+surface it through `@observe` and let the policy throttle:
+
+```python
+@observe
+def extract(self, snapshot) -> dict:
+    return {..., "inflight": self.inflight}
+
+@decide
+async def run(self, obs):
+    budget = max(0, 8 - obs["inflight"])      # keep ≤ 8 tasks in flight
+    return Decision(actions=[self._act.evaluate(x=p) for p in points[:budget]])
+```
+
+ADR never drops spawns on its own — throttling is always the policy's choice, so dynamicity is
+preserved. You can also target `inflight` with a `Goal` (e.g. stop draining once it hits 0).
 
 ## Beyond CPU
 

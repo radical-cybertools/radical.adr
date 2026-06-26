@@ -37,6 +37,31 @@ Goal(name="hits_found", metric="n_hits", threshold=5,
      direction="maximize", inclusive=True)   # fires at exactly 5
 ```
 
+## OR convergence with `AnyGoal`
+
+A list is AND. To stop on the *first* of several alternatives, wrap them in `AnyGoal` (nestable with
+`AllGoal` for mixed trees):
+
+```python
+from radical.adr import AnyGoal, Goal
+
+@goals
+def criteria(self):
+    return AnyGoal([
+        Goal(name="converged",  metric="radius",        threshold=0.005, direction="minimize"),
+        Goal(name="budget_out", metric="compute_hours", threshold=200,   direction="maximize"),
+    ])
+```
+
+## Debounce noisy metrics with `for_cycles`
+
+Require a goal to hold for N consecutive cycles so a one-cycle fluke doesn't stop the run:
+
+```python
+Goal(name="converged", metric="radius", threshold=0.005,
+     direction="minimize", for_cycles=3)
+```
+
 ## Runtime goal proposals
 
 A policy can add or tighten goals mid-campaign via the `Decision`:

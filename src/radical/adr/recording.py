@@ -60,7 +60,11 @@ class RecordingObserver:
             self._file = None
 
 
-async def replay_trace(path: str, policy: "Policy") -> list["Decision"]:
+async def replay_trace(
+    path: str,
+    policy: "Policy",
+    operators: "dict[str, type] | None" = None,
+) -> list["Decision"]:
     """Drive ``policy`` against each recorded ``obs`` in a JSONL trace.
 
     Reads a trace written by ``RecordingObserver`` and, for each line, calls
@@ -68,9 +72,19 @@ async def replay_trace(path: str, policy: "Policy") -> list["Decision"]:
     order. Fully offline — no engine, no Operator, no live execution — because
     ``Policy.decide(obs)`` only needs a plain dict in and returns a ``Decision``.
 
+    ``operators`` is an optional ``{child_name: OperatorClass}`` map. A
+    ``SPAWN_OPERATOR`` action carries its ``operator_cls`` as a live reference
+    excluded from serialization, so a replayed hierarchical policy may emit a
+    spawn whose class is unresolved; when its child name is in ``operators`` the
+    class is back-filled, making the Decision well-formed and inspectable. Replay
+    stays open-loop — nothing is executed. ``operators=None`` ⇒ unchanged behavior.
+
     Bad lines and missing files are not swallowed: ``FileNotFoundError`` and
     ``json.JSONDecodeError`` propagate naturally.
     """
+    from radical.adr.decision import ActionKind
+
+    operators = operators or {}
     decisions: list["Decision"] = []
     with open(path) as f:
         for line in f:
@@ -78,5 +92,11 @@ async def replay_trace(path: str, policy: "Policy") -> list["Decision"]:
             if not line:
                 continue
             record = json.loads(line)
-            decisions.append(await policy.decide(record["obs"]))
+            decision = await policy.decide(record["obs"])
+            for action in decision.actions:
+                if action.kind == ActionKind.SPAWN_OPERATOR \
+                        and action.operator_cls is None \
+                        and action.task_name in operators:
+                    action.operator_cls = operators[action.task_name]
+            decisions.append(decision)
     return decisions

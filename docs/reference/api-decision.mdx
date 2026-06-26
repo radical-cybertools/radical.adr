@@ -30,6 +30,7 @@ What a policy returns each cycle.
 | `RESTART_OPERATOR` | Cancel in-flight → reset to initial config → relaunch. Not idempotent. |
 | `CANCEL_OPERATOR` | `future.cancel()` the child block; leaves a `CANCELED` tombstone. |
 | `CANCEL_TASK` | `future.cancel()` on a tracked task future. |
+| `RETRY_TASK` | Re-spawn a finished task from its recorded `task_context` (fresh uid). |
 | `UPDATE_PARAM` | `state.objectives[key] = value`. |
 
 ## `Action`
@@ -57,6 +58,7 @@ Returned by `op.get_actions()`. One callable per `@act`, plus built-in verbs.
 | `acts.restart_operator(name, *, depends_on=None)` | `RESTART_OPERATOR`. |
 | `acts.cancel_operator(name)` | `CANCEL_OPERATOR`. |
 | `acts.cancel_task(uid)` | `CANCEL_TASK`. |
+| `acts.retry_task(uid)` | `RETRY_TASK`. |
 | `acts.update_param(key, value)` | `UPDATE_PARAM`. |
 | `acts.stop()` | `Decision(stop=True)`. |
 | `acts.get_schema(format="openai")` | Vendor tool schemas. |

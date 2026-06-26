@@ -115,6 +115,16 @@ class ActionSet:
         """Cancel a running or pending task by its UID."""
         return Action(kind=ActionKind.CANCEL_TASK, target_uid=uid)
 
+    def retry_task(self, uid: str) -> Action:
+        """Re-spawn a finished task from its original name + kwargs.
+
+        Looks up the task's recorded ``task_context`` (set when it was first
+        spawned) and re-invokes the same ``@act`` with the same kwargs, tracking
+        a fresh uid. Use it to recover from a ``FAILED`` task — the policy stays
+        in control (read ``error.{uid}`` and decide whether to retry).
+        """
+        return Action(kind=ActionKind.RETRY_TASK, target_uid=uid)
+
     def update_param(self, key: str, value: Any) -> Action:
         """Write a key-value pair into operator objectives."""
         return Action(kind=ActionKind.UPDATE_PARAM, param_key=key, param_value=value)
@@ -172,6 +182,9 @@ class ActionSet:
                 ]
             except (ValueError, TypeError):
                 params = []
+            # depends_on (optional) lets an LLM express task DAG dependencies —
+            # upstream task UIDs that must be DONE before this @act runs.
+            params.append(("depends_on", list))
             specs.append({
                 "name":        name,
                 "description": (fn.__doc__ or f"Spawn the '{name}' task.").strip(),
@@ -184,10 +197,12 @@ class ActionSet:
 # ── Schema helpers ─────────────────────────────────────────────────────────────
 
 _BUILTIN_SPECS = [
-    ("spawn_task",     "Spawn a registered AsyncFlow task by name with given kwargs.",
-     [("name", str), ("kwargs", dict)]),
-    ("spawn_workflow", "Spawn a registered AsyncFlow workflow block by name.",
-     [("name", str), ("kwargs", dict)]),
+    ("spawn_task",     "Spawn a registered AsyncFlow task by name with given kwargs. "
+                       "depends_on lists upstream task UIDs that gate the launch.",
+     [("name", str), ("kwargs", dict), ("depends_on", list)]),
+    ("spawn_workflow", "Spawn a registered AsyncFlow workflow block by name. "
+                       "depends_on lists upstream task UIDs that gate the launch.",
+     [("name", str), ("kwargs", dict), ("depends_on", list)]),
     ("spawn_operator", "Spawn a child operator by name; depends_on lists upstream child names.",
      [("name", str), ("depends_on", list)]),
     ("restart_operator", "Re-run a registered child from the start (resets to initial config).",
@@ -195,6 +210,8 @@ _BUILTIN_SPECS = [
     ("cancel_operator", "Cancel a child operator's in-flight run by name (leaves a CANCELED tombstone).",
      [("name", str)]),
     ("cancel_task",    "Cancel a running or pending task by its UID.",
+     [("uid", str)]),
+    ("retry_task",     "Re-spawn a finished task from its original name + kwargs, by UID.",
      [("uid", str)]),
     ("update_param",   "Write a key-value pair into operator objectives.",
      [("key", str), ("value", Any)]),
@@ -211,13 +228,18 @@ _TYPE_MAP: dict[Any, str] = {
 }
 
 
+# Parameters that are always optional when rendered into a tool schema.
+_OPTIONAL_PARAMS = frozenset({"depends_on"})
+
+
 def _param_schema(params: list[tuple]) -> dict:
     props: dict = {}
     required: list[str] = []
     for pname, ptype in params:
         json_type = _TYPE_MAP.get(ptype)
         props[pname] = {"type": json_type} if json_type else {}
-        required.append(pname)
+        if pname not in _OPTIONAL_PARAMS:
+            required.append(pname)
     schema: dict = {"type": "object", "properties": props}
     if required:
         schema["required"] = required

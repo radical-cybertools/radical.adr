@@ -34,6 +34,7 @@ Each `Action` has a `kind`. There are seven:
 | `RESTART_OPERATOR` | Re-run a registered child: cancel in-flight → reset to **initial** config → relaunch. Not idempotent. |
 | `CANCEL_OPERATOR` | `future.cancel()` the child's block Future, leaving a `CANCELED` tombstone. |
 | `CANCEL_TASK` | `future.cancel()` on a tracked task future. |
+| `RETRY_TASK` | Re-spawn a finished task from its recorded name + kwargs (a fresh uid). |
 | `UPDATE_PARAM` | `state.objectives[key] = value`. |
 
 ## depends_on — DAG chaining without futures

@@ -22,6 +22,7 @@ Goal(name="cpu_health", metric="cpu_percent", threshold=90.0,  direction="minimi
 | `threshold` | The boundary value. |
 | `direction` | `"minimize"` → satisfied when `value < threshold`; `"maximize"` → `value > threshold`. |
 | `inclusive` | `True` flips to `<=` / `>=` so a discrete goal like "reach 5 hits" fires at exactly 5. Defaults to `False` (strict). |
+| `for_cycles` | Debounce: the goal must hold for N **consecutive** cycles to count as met. Defaults to `1`. |
 
 ## How satisfaction is checked
 
@@ -56,6 +57,40 @@ def criteria(self):
         Goal(name="cpu_healthy",  metric="cpu_percent",   threshold=90.0, direction="minimize"),
     ]
 ```
+
+## OR / any-of convergence: `AnyGoal` and `AllGoal`
+
+A bare `Goal` or a list is implicit **AND**. To stop on the *first* of several alternatives — "stop
+when converged **OR** the budget is exhausted" — wrap them in `AnyGoal`. `AllGoal` is explicit AND;
+both are nestable, so arbitrary AND/OR convergence trees are expressible.
+
+```python
+from radical.adr import AnyGoal, AllGoal, Goal
+
+@goals
+def criteria(self):
+    return AnyGoal([
+        Goal(name="converged",  metric="radius",        threshold=0.005, direction="minimize"),
+        Goal(name="budget_out", metric="compute_hours", threshold=200,   direction="maximize"),
+    ])
+```
+
+Before `AnyGoal`, OR convergence required a manual `stop()` in the policy; now the operator can
+self-stop on richer conditions. A plain `Goal`/list behaves exactly as before — this is purely
+additive.
+
+## Debounce with `for_cycles`
+
+`Goal(..., for_cycles=N)` requires the goal to hold for N consecutive cycles before it counts as met,
+so a single-cycle fluke (noisy metric crossing the threshold once) doesn't stop the run:
+
+```python
+Goal(name="converged", metric="radius", threshold=0.005,
+     direction="minimize", for_cycles=3)     # stop only after 3 cycles below 0.005
+```
+
+`satisfied()` itself stays instantaneous; the consecutive-cycle streak is tracked by the operator's
+goal-check loop (a miss resets it to zero).
 
 ## Static vs runtime goals
 

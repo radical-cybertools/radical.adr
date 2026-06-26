@@ -12,9 +12,18 @@ current unreleased work is summarized below.
 
 Six validated gaps from downstream (Campaign Manager) integration feedback, plus first-class child
 operators (`SPAWN_OPERATOR` / `add_child` / `ChildHandle`) with declarative, runtime-owned lifecycle
-verbs, plus user-facing `enable_logging(...)`. Full suite: 99 passing.
+verbs, user-facing `enable_logging(...)`, and a 7-item API-hardening pass. Full suite: 120 passing.
 
 ### Added
+
+- **API hardening (additive / opt-in).** Bounded task tracking (terminal Futures pruned;
+  `depends_on` still resolves); `acts.retry_task(uid)` (new `ActionKind.RETRY_TASK`);
+  `Operator(..., max_runtime=…)` + read-only `Operator.inflight`; `AnyGoal`/`AllGoal` composites and
+  `Goal(for_cycles=N)` debounce; `get_schema()` now renders `depends_on` + lifecycle verbs (closes
+  G7); `replay_trace(..., operators={name: Cls})` for hierarchical replay; and
+  `Operator.save_checkpoint`/`load_checkpoint` for resume after preemption. None change existing
+  behavior unless opted into. See [Checkpointing](/guides/checkpointing),
+  [Goals](/concepts/goals), [Built-in actions](/concepts/built-in-actions).
 
 - **User-facing logging** — `enable_logging(...)` sets up leveled INFO/DEBUG narration of the
   Observe→Decide→Act loop under the `radical.adr` namespace. Format-compatible with AsyncFlow and

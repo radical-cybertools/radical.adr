@@ -28,6 +28,7 @@ particular operator defines. Both produce the same `SPAWN_TASK` action; see
 | [`spawn_task(name, …)`](#spawn-task) | `SPAWN_TASK` | Run a registered `@act` by name. |
 | [`spawn_workflow(name, …)`](#spawn-workflow) | `SPAWN_TASK` | Same as `spawn_task`; names intent (an `@act` returning a block). |
 | [`cancel_task(uid)`](#cancel-task) | `CANCEL_TASK` | Cancel a running/pending task by UID. |
+| [`retry_task(uid)`](#retry-task) | `RETRY_TASK` | Re-spawn a finished/failed task from its recorded context. |
 | [`spawn_operator(name, …)`](#spawn-operator) | `SPAWN_OPERATOR` | Launch a child operator (idempotent). |
 | [`restart_operator(name, …)`](#restart-operator) | `RESTART_OPERATOR` | Re-run a child from its initial config. |
 | [`cancel_operator(name)`](#cancel-operator) | `CANCEL_OPERATOR` | Cancel a child's in-flight run. |
@@ -97,6 +98,29 @@ acts.cancel_task(uid: str) -> Action
 **Gotcha.** It needs the **UID**, which you get from observed state (e.g. a `result.{uid}` /
 `runtime` key), not from the action that spawned it — the policy doesn't keep futures. An unknown UID
 raises `ActionError` during [pre-flight validation](/concepts/decisions-and-actions#pre-flight-validation).
+
+### `retry_task`
+
+```python
+acts.retry_task(uid: str) -> Action
+```
+
+**What it does.** Looks up the task's recorded `task_context` (its `@act` name + original kwargs,
+captured when it was first spawned) and **re-spawns it** under a fresh uid. Use it to recover from a
+`FAILED` task without re-deriving its arguments — the operator self-heals while the policy stays in
+control.
+
+```python
+@decide
+async def run(self, obs):
+    # obs["failed_uids"] is assembled in @observe from error.{uid} keys
+    return Decision(actions=[self._act.retry_task(uid) for uid in obs["failed_uids"]])
+```
+
+**Gotcha.** It retries with the **same kwargs** — it re-runs identical work, it does not change the
+inputs. If a different input is needed, spawn a fresh task instead. The uid must exist in
+`task_context` (else `ActionError`). Retry is explicit and policy-driven by design: ADR never
+silently auto-retries, so failures stay visible (read `error.{uid}` first and decide).
 
 ---
 

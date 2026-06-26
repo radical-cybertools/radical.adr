@@ -41,10 +41,20 @@ no `Operator`, no task dispatch — so it is deterministic and fast.
 <Note>
 **Replay is open-loop.** It replays the *policy only* — it does not re-execute actions, and the
 candidate's decisions do not change the recorded observation stream. You are comparing *what each
-policy would decide on identical conditions*, not running a new campaign. A `SPAWN_OPERATOR` decision
-carries live Python references (`operator_cls` / `policy`) that are `exclude=True`, so it does not
-round-trip through record/replay.
+policy would decide on identical conditions*, not running a new campaign.
 </Note>
+
+### Hierarchical (child-operator) policies
+
+A `SPAWN_OPERATOR` decision carries live Python references (`operator_cls` / `policy`) that are
+`exclude=True`, so they're not in the trace. To replay a policy that spawns children, pass an
+`operators={name: OperatorClass}` map — replay back-fills `operator_cls` so the decisions are
+well-formed and inspectable (still open-loop, nothing executes):
+
+```python
+decisions = await replay_trace("trace.jsonl", CandidatePolicy(),
+                               operators={"refiner": SearchOperator})
+```
 
 ## What it's good for
 

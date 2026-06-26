@@ -37,11 +37,13 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
+import time
 import warnings
 from typing import TYPE_CHECKING, Any, AsyncIterator, Callable
 
 from radical.adr.decision import Action, ActionKind, Decision
 from radical.adr.errors import ActionError, PolicyError
+from radical.adr.goals import AllGoal, AnyGoal, _GoalGroup, goal_from_dict, goal_to_dict
 from radical.adr.message import InboxMessage, MessageKind
 from radical.adr.state import RuntimeState, Snapshot
 from radical.adr.tools import ActionSet
@@ -63,7 +65,7 @@ _RESERVED = frozenset({
     "operator_id", "engine", "parent", "observer",
     "state", "inbox", "children", "_child_starts", "_child_config",
     "_stop_event", "_adl_actionset", "_policy", "_runtime_goals", "_block_factory",
-    "_max_cycles",
+    "_max_cycles", "_max_runtime", "_started_at", "_goal_streaks",
 })
 
 
@@ -314,6 +316,7 @@ class Operator:
         inbox_maxsize: int                   = 0,
         observer:      "ObserverBase | None" = None,
         max_cycles:    int | None            = None,
+        max_runtime:   float | None          = None,
     ) -> None:
         object.__setattr__(self, "operator_id",  operator_id or type(self).__name__)
         object.__setattr__(self, "engine",       engine)
@@ -328,6 +331,9 @@ class Operator:
         object.__setattr__(self, "_stop_event",    asyncio.Event())
         object.__setattr__(self, "_block_factory", None)
         object.__setattr__(self, "_max_cycles",    max_cycles)
+        object.__setattr__(self, "_max_runtime",   max_runtime)   # wall-clock cap (seconds)
+        object.__setattr__(self, "_started_at",    None)          # set at run() start
+        object.__setattr__(self, "_goal_streaks",  {})            # goal name → consecutive-satisfied
 
         object.__setattr__(self, "_policy",        policy)
         object.__setattr__(self, "_runtime_goals", [])
@@ -426,18 +432,47 @@ class Operator:
             raw = goals_fn(self)
             static = raw if isinstance(raw, list) else [raw]
             for g in static:
-                if not isinstance(g, Goal):
+                if not isinstance(g, (Goal, _GoalGroup)):
                     raise TypeError(
                         f"@goals method '{goals_fn.__name__}' on {type(self).__name__} "
-                        f"must return Goal or list[Goal], got {type(g).__name__}"
+                        f"must return Goal/AnyGoal/AllGoal (or a list), got {type(g).__name__}"
                     )
         runtime: list = object.__getattribute__(self, "_runtime_goals")
         all_goals = static + runtime
-        if all_goals and all(g.satisfied(obs, snapshot) for g in all_goals):
+        if not all_goals:
+            return
+
+        # Evaluate the whole goal tree (no short-circuit) so every leaf goal's
+        # consecutive-satisfied streak (for_cycles debounce) updates each cycle.
+        streaks: dict = object.__getattribute__(self, "_goal_streaks")
+        seen: set = set()
+        results = [self._eval_goal(g, obs, snapshot, streaks, seen) for g in all_goals]
+        for name in [k for k in streaks if k not in seen]:
+            del streaks[name]                       # drop streaks for removed goals
+
+        if all(results):
             if not decision.stop:
-                log.info("cycle %d: all %d goals satisfied -> stopping",
+                log.info("cycle %d: all %d goal(s) satisfied -> stopping",
                          self.state.cycle, len(all_goals))
             decision.stop = True
+
+    def _eval_goal(self, goal, obs: dict, snapshot: Snapshot,
+                   streaks: dict, seen: set) -> bool:
+        """Evaluate a goal (leaf or composite), applying for_cycles debounce.
+
+        Uses list comprehensions (not generators) so *all* leaves are evaluated
+        every cycle and their debounce streaks stay correct.
+        """
+        if isinstance(goal, AllGoal):
+            return all([self._eval_goal(g, obs, snapshot, streaks, seen) for g in goal.goals])
+        if isinstance(goal, AnyGoal):
+            return any([self._eval_goal(g, obs, snapshot, streaks, seen) for g in goal.goals])
+        # leaf Goal
+        seen.add(goal.name)
+        instant = goal.satisfied(obs, snapshot)
+        streak  = streaks.get(goal.name, 0) + 1 if instant else 0
+        streaks[goal.name] = streak
+        return streak >= getattr(goal, "for_cycles", 1)
 
     def _apply_goal_changes(self, decision: Decision) -> None:
         """Upsert / remove runtime goals proposed by the policy."""
@@ -456,6 +491,17 @@ class Operator:
     def runtime_goals(self) -> list:
         """Runtime goals currently proposed by the policy."""
         return object.__getattribute__(self, "_runtime_goals")
+
+    @property
+    def inflight(self) -> int:
+        """Number of in-flight tasks (status PENDING or RUNNING).
+
+        Read it in ``@observe`` (e.g. ``"inflight": self.inflight``) to let a
+        policy throttle its own spawn rate, or target it with a ``Goal``. ADR
+        never drops spawns — throttling is always the policy's choice.
+        """
+        return sum(1 for s in self.state.runtime.values()
+                   if s in ("PENDING", "RUNNING"))
 
     @property
     def cycle_history(self) -> "list[Snapshot]":
@@ -556,10 +602,15 @@ class Operator:
                        check goals → may force stop
         """
         if self.observer is not None:
-            self.observer.on_start(self.operator_id, {"objectives": self.state.objectives})
+            self.observer.on_start(self.operator_id, {
+                "objectives": self.state.objectives,
+                "children":   {n: type(c).__name__ for n, c in self.children.items()},
+            })
 
-        log.info("operator '%s' starting (max_cycles=%s)",
-                 self.operator_id, object.__getattribute__(self, "_max_cycles"))
+        object.__setattr__(self, "_started_at", time.monotonic())
+        log.info("operator '%s' starting (max_cycles=%s, max_runtime=%s)",
+                 self.operator_id, object.__getattribute__(self, "_max_cycles"),
+                 object.__getattribute__(self, "_max_runtime"))
 
         try:
             while not self._stop_event.is_set():
@@ -613,6 +664,14 @@ class Operator:
 
                 mc = object.__getattribute__(self, "_max_cycles")
                 if mc is not None and self.state.cycle >= mc:
+                    self._stop_event.set()
+
+                mr = object.__getattribute__(self, "_max_runtime")
+                started = object.__getattribute__(self, "_started_at")
+                if mr is not None and started is not None \
+                        and (time.monotonic() - started) >= mr:
+                    log.info("operator '%s': max_runtime %.1fs reached -> stopping",
+                             self.operator_id, mr)
                     self._stop_event.set()
 
                 if decision.stop:
@@ -669,6 +728,67 @@ class Operator:
             kind=MessageKind.STOP, sender_id="system", payload=None
         ))
 
+    # ── Checkpointing ─────────────────────────────────────────────────────────
+
+    def save_checkpoint(self, path: str) -> None:
+        """Serialize this operator's *steering* state to JSON for later resume.
+
+        Persists exactly the state ADR owns — ``cycle``, ``objectives``, task
+        ``runtime`` statuses, ``artifacts``, ``task_context``, runtime goals,
+        goal-debounce streaks, and child lifecycle metadata. Live task Futures
+        are **not** persisted (they belong to AsyncFlow/RHAPSODY — the sacred
+        boundary); any task still in flight at save time is recorded as ``LOST``
+        so a resumed policy can ``retry_task`` it from ``task_context``.
+
+        Child *operator instances* are not serialized — re-declare them with
+        ``add_child`` in the operator's constructor as usual; their lifecycle
+        metadata (``_child_starts`` / ``_child_config``) is restored on top.
+        """
+        import json
+        runtime = {uid: ("LOST" if st in ("PENDING", "RUNNING") else st)
+                   for uid, st in self.state.runtime.items()}
+        data = {
+            "version":       1,
+            "operator_id":   self.operator_id,
+            "cycle":         self.state.cycle,
+            "objectives":    self.state.objectives,
+            "runtime":       runtime,
+            "artifacts":     self.state.artifacts,
+            "task_context":  self.state.task_context,
+            "runtime_goals": [goal_to_dict(g)
+                              for g in object.__getattribute__(self, "_runtime_goals")],
+            "goal_streaks":  object.__getattribute__(self, "_goal_streaks"),
+            "child_starts":  dict(self._child_starts),
+            "child_config":  dict(self._child_config),
+        }
+        with open(path, "w") as f:
+            json.dump(data, f, default=str, indent=2)
+        log.info("operator '%s': checkpoint saved to %s (cycle=%d)",
+                 self.operator_id, path, self.state.cycle)
+
+    def load_checkpoint(self, path: str) -> None:
+        """Restore steering state saved by :meth:`save_checkpoint` onto this operator.
+
+        Call on a freshly constructed operator before ``run()``; the loop then
+        resumes from the saved ``cycle`` with the saved objectives/goals. Tasks
+        recorded as ``LOST`` surface in ``runtime`` for the policy to re-spawn.
+        """
+        import json
+        with open(path) as f:
+            data = json.load(f)
+        self.state.cycle = data.get("cycle", 0)
+        self.state.objectives.update(data.get("objectives", {}))
+        self.state.runtime.update(data.get("runtime", {}))
+        self.state.artifacts.update(data.get("artifacts", {}))
+        self.state.task_context.update(data.get("task_context", {}))
+        object.__setattr__(self, "_runtime_goals",
+                           [goal_from_dict(d) for d in data.get("runtime_goals", [])])
+        object.__getattribute__(self, "_goal_streaks").update(data.get("goal_streaks", {}))
+        self._child_starts.update(data.get("child_starts", {}))
+        self._child_config.update(data.get("child_config", {}))
+        log.info("operator '%s': checkpoint loaded from %s (cycle=%d)",
+                 self.operator_id, path, self.state.cycle)
+
     # ── Inbox drain ──────────────────────────────────────────────────────────
 
     async def _drain_inbox(self) -> None:
@@ -718,6 +838,15 @@ class Operator:
                         "message":   str(error) if error else "unknown",
                         "type":      type(error).__name__ if error else "unknown",
                     }
+                # Prune the now-terminal task Future so task_futures stays bounded
+                # over long runs; keep the resolved value so a later depends_on can
+                # still resolve. Child-operator block Futures are exempt (few; their
+                # liveness drives cancel/restart semantics).
+                if status in ("DONE", "FAILED", "CANCELED") \
+                        and uid not in set(self._child_starts.values()):
+                    self.state.task_futures.pop(uid, None)
+                    self.state.remember_resolved(uid, status, payload.get("result")
+                                                 if status == "DONE" else payload.get("error"))
 
         elif msg.kind == MessageKind.DIRECTIVE:
             payload = msg.payload
@@ -833,9 +962,19 @@ class Operator:
             elif act.kind == ActionKind.CANCEL_TASK:
                 if act.target_uid is None:
                     problems.append(f"action[{i}] CANCEL_TASK: target_uid is required")
-                elif act.target_uid not in self.state.task_futures:
+                elif act.target_uid not in self.state.task_futures \
+                        and act.target_uid not in self.state.resolved:
                     problems.append(
                         f"action[{i}] CANCEL_TASK: unknown uid '{act.target_uid}'"
+                    )
+
+            elif act.kind == ActionKind.RETRY_TASK:
+                if act.target_uid is None:
+                    problems.append(f"action[{i}] RETRY_TASK: target_uid is required")
+                elif act.target_uid not in self.state.task_context:
+                    problems.append(
+                        f"action[{i}] RETRY_TASK: unknown uid '{act.target_uid}' "
+                        "(no recorded task to retry)"
                     )
 
             elif act.kind == ActionKind.UPDATE_PARAM:
@@ -893,9 +1032,10 @@ class Operator:
                     f"action[{i}] '{act.task_name}': missing required parameter '{name}'"
                 )
 
-        # Unresolvable depends_on → warn, do not raise.
+        # Unresolvable depends_on → warn, do not raise. A pruned-but-cached
+        # terminal task (state.resolved) is still resolvable, so don't warn on it.
         for uid in act.depends_on:
-            if uid not in self.state.task_futures:
+            if uid not in self.state.task_futures and uid not in self.state.resolved:
                 warnings.warn(
                     f"Operator '{self.operator_id}': action[{i}] '{act.task_name}' "
                     f"depends_on '{uid}' which is not a known task future on this "
@@ -915,6 +1055,62 @@ class Operator:
             lambda fut, _uid=uid: _deliver_task_event(fut, _uid, self.inbox)
         )
 
+    def _resolve_task_deps(self, uids: list[str]) -> list[asyncio.Future]:
+        """Resolve depends_on task UIDs to Futures (live or reconstructed).
+
+        A still-live Future is passed directly. A terminal task whose Future was
+        pruned is reconstructed from ``state.resolved`` as a completed Future, so
+        DAG chaining survives pruning. Unknown/evicted UIDs are skipped (already
+        warned at validation).
+        """
+        loop = asyncio.get_event_loop()
+        deps: list[asyncio.Future] = []
+        for uid in uids:
+            live = self.state.task_futures.get(uid)
+            if live is not None:
+                deps.append(live)
+                continue
+            cached = self.state.resolved.get(uid)
+            if cached is not None:
+                status, value = cached
+                fut = loop.create_future()
+                if status == "DONE":
+                    fut.set_result(value)
+                elif status == "FAILED":
+                    fut.set_exception(value if isinstance(value, BaseException)
+                                      else Exception(str(value)))
+                else:  # CANCELED
+                    fut.cancel()
+                deps.append(fut)
+        return deps
+
+    async def _spawn_act_result(self, name: str, kwargs: dict) -> None:
+        """Invoke a registered @act and route its return (shared by spawn/retry)."""
+        result = await type(self)._adl_act_registry[name](self, **kwargs)
+        if isinstance(result, asyncio.Future):
+            self._track_future(result, name, kwargs)
+        elif result is not None:
+            uid = f"local.{name}.{id(result)}"
+            self.state.task_context[uid] = {"name": name, "kwargs": kwargs}
+            self.inbox.put_nowait(InboxMessage(
+                kind      = MessageKind.TASK_EVENT,
+                sender_id = "adl.local",
+                payload   = {"uid": uid, "state": "DONE", "result": result},
+            ))
+
+    async def _retry_task(self, act: Action) -> None:
+        """Re-spawn a finished task from its recorded name + kwargs."""
+        uid = act.target_uid
+        ctx = self.state.task_context.get(uid) if uid else None
+        if ctx is None:
+            raise ActionError(f"RETRY_TASK: unknown uid '{uid}'")
+        name = ctx["name"]
+        if name not in type(self)._adl_act_registry:
+            raise ActionError(f"RETRY_TASK '{uid}': '{name}' is not a registered act")
+        log.info("operator '%s': retrying task '%s' (was uid=%s)",
+                 self.operator_id, name, uid)
+        await self._spawn_act_result(name, ctx.get("kwargs", {}))
+
     async def _apply_one(self, act: Action) -> None:
         log.debug("cycle %d: apply %s '%s'",
                   self.state.cycle, act.kind, act.task_name or act.target_uid or act.param_key)
@@ -927,11 +1123,7 @@ class Operator:
                     f"Unknown act '{act.task_name}'. "
                     f"Registered: {list(type(self)._adl_act_registry)}"
                 )
-            dep_futures = [
-                self.state.task_futures[uid]
-                for uid in act.depends_on
-                if uid in self.state.task_futures
-            ]
+            dep_futures = self._resolve_task_deps(act.depends_on)
             result = await fn(self, *dep_futures, **act.task_kwargs)
             if isinstance(result, asyncio.Future):
                 self._track_future(result, act.task_name, act.task_kwargs)
@@ -962,8 +1154,13 @@ class Operator:
                 raise ActionError("CANCEL_TASK requires target_uid")
             future = self.state.task_futures.get(act.target_uid)
             if future is None:
+                if act.target_uid in self.state.resolved:
+                    return   # already terminal (pruned) — cancel is a no-op
                 raise ActionError(f"CANCEL_TASK: unknown uid '{act.target_uid}'")
             future.cancel()
+
+        elif act.kind == ActionKind.RETRY_TASK:
+            await self._retry_task(act)
 
         elif act.kind == ActionKind.UPDATE_PARAM:
             if act.param_key is None:

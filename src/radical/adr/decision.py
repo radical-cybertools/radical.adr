@@ -13,6 +13,7 @@ from radical.adr.goals import Goal
 class ActionKind(str, Enum):
     SPAWN_TASK       = "spawn_task"
     CANCEL_TASK      = "cancel_task"
+    RETRY_TASK       = "retry_task"
     SPAWN_BLOCK      = "spawn_block"
     SPAWN_OPERATOR   = "spawn_operator"
     RESTART_OPERATOR = "restart_operator"
