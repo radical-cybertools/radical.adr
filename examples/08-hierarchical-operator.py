@@ -185,18 +185,18 @@ async def main():
 
     print(f"Adaptive fan-out: explorer → {K} refiners (depends_on=explorer)\n")
     t0 = time.perf_counter()
-    await campaign.run_to_completion()
+    final = await campaign.run_to_completion()
     elapsed = time.perf_counter() - t0
 
-    explorer = campaign.children["explorer"]
-    print(f"\nDone in {elapsed:.2f}s  |  campaign cycles={campaign.state.cycle}")
-    print(f"  explorer: cycles={explorer.state.cycle}  "
-          f"radius={explorer.radius:.5f}  best_x={explorer.best_x:+.5f}")
+    # Read children through the public ChildHandle (campaign.child), not the
+    # operator instances — the parent's Snapshot mirrors their latest metrics.
+    explorer = campaign.child("explorer")
+    print(f"\nDone in {elapsed:.2f}s  |  campaign cycles={final.cycle + 1}")
+    print(f"  explorer: radius={explorer.radius:.5f}  best_x={explorer.best_x:+.5f}")
     for i in range(K):
-        refiner = campaign.children.get(f"refiner_{i}")
-        if refiner is not None:
-            print(f"  refiner_{i}: cycles={refiner.state.cycle}  "
-                  f"radius={refiner.radius:.5f}  center={refiner.center:+.5f}")
+        refiner = campaign.child(f"refiner_{i}")
+        if refiner.started:
+            print(f"  refiner_{i}: radius={refiner.radius:.5f}  center={refiner.center:+.5f}")
 
     await engine.shutdown()
 

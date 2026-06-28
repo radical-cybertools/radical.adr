@@ -121,7 +121,7 @@ async def main():
         if snapshot.cycle >= 10:
             break
 
-    print(f"\nFinal best: {op.best_score:+.3f}  cycles={op.state.cycle}")
+    print(f"\nFinal best: {op.best_score:+.3f}  cycles={snapshot.cycle + 1}")
     await engine.shutdown()
 
 

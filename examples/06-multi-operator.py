@@ -92,12 +92,12 @@ async def run_one(engine, start_center: float, op_id: str) -> dict:
     op        = SearchOperator(engine, operator_id=op_id)
     op.center = start_center
     op.policy = SearchPolicy(op)
-    await op.run_to_completion()
+    final = await op.run_to_completion()
     best = min(op.history, key=lambda r: r["value"]) if op.history else None
     return {"id": op_id, "start": start_center,
             "best_x": best["x"] if best else None,
             "error":  abs(best["x"] - TARGET) if best else None,
-            "cycles": op.state.cycle}
+            "cycles": final.cycle + 1}
 
 
 async def main():

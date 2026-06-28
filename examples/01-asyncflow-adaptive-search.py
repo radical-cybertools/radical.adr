@@ -95,7 +95,7 @@ async def main():
         print(f"cycle {snapshot.cycle:2d}  center={op.center:+.5f}  radius={op.radius:.5f}")
 
     best = min(op.history, key=lambda r: r["value"])
-    print(f"\nbest x={best['x']:.6f}  error={abs(best['x'] - TARGET):.6f}  cycles={op.state.cycle}")
+    print(f"\nbest x={best['x']:.6f}  error={abs(best['x'] - TARGET):.6f}  cycles={snapshot.cycle + 1}")
     await engine.shutdown()
 
 

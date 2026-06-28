@@ -5,7 +5,7 @@ Spawning an AsyncFlow workflow block from an ADR operator using @act.
 ADR concepts demonstrated
   - @act returning a block Future — method body orchestrates sub-tasks
   - acts.prepare_and_score(...) dispatches to the @act which calls engine.block
-  - No register_workflow_fn needed — the @act method IS the workflow entry point
+  - The @act method IS the workflow entry point
 
 Usage:
     python 05-spawn-block.py
@@ -109,7 +109,7 @@ async def main():
         print(f"  cycle {snapshot.cycle:2d}  best={op.best_score:+.3f}  "
               f"results={len(snapshot.observations)}")
 
-    print(f"\nFinal best: {op.best_score:+.3f}  cycles={op.state.cycle}")
+    print(f"\nFinal best: {op.best_score:+.3f}  cycles={snapshot.cycle + 1}")
     await engine.shutdown()
 
 

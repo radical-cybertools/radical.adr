@@ -168,9 +168,8 @@ async def main():
     completion_order = await run_until_first_satisfied(*operators)
     elapsed = time.perf_counter() - t0
 
-    print(f"\n{'Operator':<14} {'Start':>7} {'Final radius':>13} "
-          f"{'Cycles':>7} {'Outcome'}")
-    print("-" * 60)
+    print(f"\n{'Operator':<14} {'Start':>7} {'Final radius':>13} {'Outcome'}")
+    print("-" * 52)
     winner_id = completion_order[0].operator_id if completion_order else None
     for op in operators:
         best    = min(op.history, key=lambda r: r["value"]) if op.history else None
@@ -179,7 +178,6 @@ async def main():
             f"{op.operator_id:<14} "
             f"{dict(starts)[op.operator_id]:>+7.1f} "
             f"{op.radius:>13.6f} "
-            f"{op.state.cycle:>7} "
             f"{outcome}"
         )
         if best:

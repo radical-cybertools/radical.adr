@@ -219,14 +219,15 @@ async def main() -> None:
     print(f"  model={MODEL}  target≈{TARGET}  goal: radius < {MIN_RADIUS}")
     print("  LangGraph decides what to compute  →  ADR executes + checks goals\n")
 
-    async for _ in op.run():
+    snapshot = None
+    async for snapshot in op.run():
         pass
 
-    # The operator stopped because the ScientificGoal converged —
+    # The operator stopped because the Goal converged —
     # not because the LLM returned stop=True.
     best = min(op.history, key=lambda r: r["value"]) if op.history else None
     print(f"\nStopped by: Goal (autonomous) — not the LLM")
-    print(f"Cycles: {op.state.cycle}  |  Final radius: {op.radius:.6f}")
+    print(f"Cycles: {snapshot.cycle + 1}  |  Final radius: {op.radius:.6f}")
     if best:
         print(f"Best:   x={best['x']:.6f}  error={abs(best['x'] - TARGET):.6f}")
 

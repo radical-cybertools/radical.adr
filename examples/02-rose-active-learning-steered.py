@@ -1,4 +1,4 @@
-"""02-rose-ensemble-steered.py
+"""02-rose-active-learning-steered.py
 
 Two ROSE SequentialActiveLearner instances steered by one ADR operator.
 
@@ -10,8 +10,8 @@ data across cycles via their own pickle files.
 ADR concepts demonstrated
   - @act wrapping a multi-step ROSE run (simulation → train → active-learn)
   - @observe extracting per-learner metrics
-  - EnsemblePolicy(RulePolicy) allocating n_select budget based on comparative MSE
-  - ScientificGoal stopping when either learner crosses the MSE threshold
+  - EnsemblePolicy(Policy) allocating n_select budget based on comparative MSE
+  - Goal stopping when either learner crosses the MSE threshold
 
 Dependencies:
     pip install numpy scikit-learn
@@ -19,7 +19,7 @@ Dependencies:
     pip install -e /path/to/radical.asyncflow
 
 Usage:
-    python 02-rose-ensemble-steered.py
+    python 02-rose-active-learning-steered.py
 """
 
 from __future__ import annotations
@@ -201,7 +201,7 @@ async def main():
               f"{a.get('n_select', '-'):>6}  "
               f"{b.get('n_select', '-'):>6}")
 
-    print(f"\nBest MSE: {op.best_mse:.5f}  cycles: {op.state.cycle}")
+    print(f"\nBest MSE: {op.best_mse:.5f}  cycles: {snapshot.cycle + 1}")
 
     await _engine.shutdown()
     for p in DATA.values():
