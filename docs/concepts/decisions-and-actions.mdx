@@ -32,7 +32,7 @@ Each `Action` has a `kind`. There are seven:
 | `SPAWN_BLOCK` | Alias for `SPAWN_TASK` — identical lookup and execution path. |
 | `SPAWN_OPERATOR` | Register-or-reuse a child by name, then launch it as a block. **Idempotent**: a re-emit on an already-started child is a no-op + a logged warning. |
 | `RESTART_OPERATOR` | Re-run a registered child: cancel in-flight → reset to **initial** config → relaunch. Not idempotent. |
-| `CANCEL_OPERATOR` | `future.cancel()` the child's block Future, leaving a `CANCELED` tombstone. |
+| `CANCEL_OPERATOR` | Cancel the child's in-flight run, leaving a `CANCELED` tombstone. |
 | `CANCEL_TASK` | `future.cancel()` on a tracked task future. |
 | `RETRY_TASK` | Re-spawn a finished task from its recorded name + kwargs (a fresh uid). |
 | `UPDATE_PARAM` | `state.objectives[key] = value`. |
@@ -41,7 +41,7 @@ Each `Action` has a `kind`. There are seven:
 
 Every `Action` carries `depends_on: list[str]`, interpreted by kind:
 
-- For `SPAWN_TASK` / `SPAWN_BLOCK` — upstream task **UIDs** in `state.task_futures`.
+- For `SPAWN_TASK` / `SPAWN_BLOCK` — upstream task **UIDs**.
 - For `SPAWN_OPERATOR` / `RESTART_OPERATOR` — upstream child operator **names** (resolved
   internally to their start-futures).
 

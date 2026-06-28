@@ -30,7 +30,7 @@ objectives (proxied to `state.objectives`).
 | `operator_id` | `str \| None` | Stable id; defaults to the class name. |
 | `policy` | `Policy \| None` | Decision policy; may also be set via `op.policy = ...`. |
 | `parent` | `Operator \| None` | Set automatically for child operators. |
-| `inbox_maxsize` | `int` | `asyncio.Queue` max size (0 = unbounded). |
+| `inbox_maxsize` | `int` | Max size of the operator's inbox (0 = unbounded). |
 | `observer` | `ObserverBase \| None` | Lifecycle observer. |
 | `max_cycles` | `int \| None` | Safety valve — force stop after N cycles. |
 | `max_runtime` | `float \| None` | Safety valve — force stop after N wall-clock seconds. |

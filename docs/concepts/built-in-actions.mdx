@@ -184,7 +184,7 @@ drifted to `radius=0.01` restarts at its declared `radius`.
 acts.cancel_operator(name: str) -> Action
 ```
 
-**What it does.** Cancels the child's block Future (propagating to its spawned tasks); the child then
+**What it does.** Cancels the child's in-flight run (propagating to its spawned tasks); the child then
 shows `CANCELED`. The name stays known to the runtime.
 
 **Gotcha.** Because the name stays known, a later `spawn_operator` on it is **still a no-op** —

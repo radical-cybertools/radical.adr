@@ -46,8 +46,8 @@ policy would decide on identical conditions*, not running a new campaign.
 
 ### Hierarchical (child-operator) policies
 
-A `SPAWN_OPERATOR` decision carries live Python references (`operator_cls` / `policy`) that are
-`exclude=True`, so they're not in the trace. To replay a policy that spawns children, pass an
+A `SPAWN_OPERATOR` decision carries live Python references (`operator_cls` / `policy`) that aren't
+serialized, so they're not in the trace. To replay a policy that spawns children, pass an
 `operators={name: OperatorClass}` map — replay back-fills `operator_cls` so the decisions are
 well-formed and inspectable (still open-loop, nothing executes):
 

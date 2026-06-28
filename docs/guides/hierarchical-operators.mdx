@@ -83,9 +83,9 @@ The intent lives in the **verb**, not a flag. There is no user-managed `fanned_o
 
 | Verb | Behavior |
 |---|---|
-| `acts.spawn_operator(name, …)` | **Idempotent** "ensure launched." Once a child has *ever* started (`name in _child_starts`, including terminal `DONE`/`FAILED`/`CANCELED`), a re-emit is a **no-op + a logged warning**. |
-| `acts.restart_operator(name)` | Re-run: cancel in-flight → reset to the **initial** declared config (`_child_config`) → relaunch. Not idempotent. |
-| `acts.cancel_operator(name)` | `future.cancel()` the child's block Future, leaving a `CANCELED` tombstone. The name stays known. |
+| `acts.spawn_operator(name, …)` | **Idempotent** "ensure launched." Once a child has *ever* started (including terminal `DONE`/`FAILED`/`CANCELED`), a re-emit is a **no-op + a logged warning**. |
+| `acts.restart_operator(name)` | Re-run: cancel in-flight → reset to the **initial** declared config → relaunch. Not idempotent. |
+| `acts.cancel_operator(name)` | Cancel the child's in-flight run, leaving a `CANCELED` tombstone. The name stays known. |
 
 <Note>
 **Well-written policies gate on `child.started`** and never hit the warning path — it is a safety net

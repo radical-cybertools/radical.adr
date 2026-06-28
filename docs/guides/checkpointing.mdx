@@ -25,7 +25,7 @@ It serializes exactly the state ADR owns:
 | `task_context` | `uid → {name, kwargs}` — enables `retry_task` after resume |
 | runtime goals | policy-proposed goals (incl. `AnyGoal`/`AllGoal` trees) |
 | goal streaks | `for_cycles` debounce counters |
-| child lifecycle metadata | `_child_starts` / `_child_config` |
+| child lifecycle metadata | which children were started, and their initial config |
 
 ## Resume
 

@@ -26,22 +26,22 @@ to `child.start(*futures)` and `future.cancel()`. See
 - **`@act` runs in the event loop** with `self` available, and chooses its own execution strategy:
   local computation, `engine.function_task`, or `engine.block`. The operator never pre-registers
   tasks — registration happens at invocation time.
-- **`_apply_one` is execution-agnostic.** It calls the `@act` method, inspects the return (Future or
-  plain value), and routes accordingly. One code path for all execution modes.
+- **Action application is execution-agnostic.** The operator calls the `@act` method, inspects the
+  return (Future or plain value), and routes accordingly. One path for all execution modes.
 - **One-cycle latency.** A task dispatched in cycle N produces a result visible in cycle N+1 —
-  async tasks (done-callback → `put_nowait`) and local acts (`put_nowait`) alike.
+  async tasks and local acts alike.
 
 ## Input and state
 
 - **The inbox is the only input channel.** Task completions, local results, child snapshots, parent
-  directives, MCP mutations — all arrive through `inbox` and are processed in `_drain_inbox`. No
+  directives, MCP mutations — all arrive through the inbox and are drained each cycle. No
   out-of-band state mutations.
 - **State proxying is transparent.** `self.radius = 2.5` writes `state.objectives["radius"]`, visible
   in `snapshot.objectives` and readable in `@observe`. No serialization step.
-- **Terminal task Futures are pruned.** Once a task settles, its `Future` is dropped from
-  `state.task_futures` and its result moves to a bounded `state.resolved` cache, so long runs stay
-  memory-bounded. A `depends_on` on a pruned task still resolves (the cached result is replayed as a
-  completed Future); the cache window is large enough that realistic DAGs are never affected.
+- **Terminal task handles are released.** Once a task settles, the operator stops holding its live
+  Future and keeps only its result in a bounded cache, so long runs stay memory-bounded. A
+  `depends_on` on a settled task still resolves; the cache window is large enough that realistic DAGs
+  are never affected.
 - **Checkpoints persist steering state only.** `save_checkpoint`/`load_checkpoint` serialize cycle,
   objectives, runtime statuses, `task_context`, runtime goals, goal streaks, and child lifecycle
   metadata — never live `Future`s (those belong to AsyncFlow/RHAPSODY). In-flight tasks are recorded
@@ -49,7 +49,7 @@ to `child.start(*futures)` and `future.cancel()`. See
 
 ## Goals
 
-- **Goals check before act.** `_check_goals` runs after DECIDE, before ACT. The stop cycle's actions
+- **Goals check before act.** The goal check runs after DECIDE, before ACT. The stop cycle's actions
   still apply.
 - **Goals are source-agnostic and explicit.** `satisfied` reads `obs[metric]` then
   `snapshot.objectives[metric]`; `snapshot.runtime` is never auto-checked. Resource metrics must be

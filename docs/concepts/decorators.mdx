@@ -5,8 +5,7 @@ description: "@observe, @decide, @goals, and @act — how an operator is wired."
 
 ADR uses four decorators to wire behavior onto your classes. Three live on the `Operator`
 (`@observe`, `@goals`, `@act`); one lives on the `Policy` (`@decide`, covered in
-[Policies](/concepts/policies)). All are registered **once at class-definition time** via
-`__init_subclass__` — no per-instance setup.
+[Policies](/concepts/policies)). All are registered **once at class-definition time** — no per-instance setup.
 
 ## `@observe` — mandatory
 
@@ -31,7 +30,7 @@ observation — an operator is domain-specific by definition.
 </Note>
 
 You can also read past cycles inside `@observe` via `self.cycle_history` (previous completed
-snapshots, oldest first, up to 64) — useful for detecting stagnation:
+snapshots, oldest first) — useful for detecting stagnation:
 
 ```python
 @observe
@@ -60,8 +59,8 @@ loop with `self` available**. Its return type decides the execution mode:
 
 | Return type | Execution mode |
 |-------------|----------------|
-| `asyncio.Future` | Async — tracked via done-callback; result arrives next cycle |
-| Plain value (`dict`, …) | Local — delivered to the inbox via `put_nowait`, visible next cycle |
+| `asyncio.Future` | Async — tracked automatically; result arrives next cycle |
+| Plain value (`dict`, …) | Local — delivered to the inbox, visible next cycle |
 | `None` | No-op — the method ran but produced no trackable result |
 
 <CodeGroup>

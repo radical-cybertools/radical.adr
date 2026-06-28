@@ -37,14 +37,6 @@ With `ThreadPoolExecutor` or local execution, any async function works. See
 [AsyncFlow integration](/integrations/asyncflow).
 </Note>
 
-## AsyncFlow feature branch
-
-ADR relies on block-cancellation support in AsyncFlow (the `feature/enable_block_cancellation`
-branch): `future.state` polling for `PENDING → RUNNING` promotion, block-cancellation propagation
-to spawned tasks, and an idempotent task-cancellation path. If you cancel operators or tasks at
-runtime, ensure your AsyncFlow build includes it. See
-[AsyncFlow integration](/integrations/asyncflow#feature-branch-dependency).
-
 ## Next
 
 <CardGroup cols={2}>

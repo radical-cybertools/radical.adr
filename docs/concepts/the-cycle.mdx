@@ -15,17 +15,16 @@ flowchart LR
 
 ## RUN — drain the inbox
 
-The inbox (`asyncio.Queue`) is the **only input channel**. `_drain_inbox` processes up to 64
-messages per cycle: the first message blocks for up to 0.05s, the rest are drained with
-`get_nowait()`. After draining, `_sync_running_states()` polls `future.state` to promote tasks from
-`PENDING` to `RUNNING`.
+The inbox is the operator's **only input channel**. At the start of each cycle the operator drains
+everything waiting there — task completions, child snapshots, parent directives — and refreshes the
+status of tasks that have begun running (`PENDING → RUNNING`).
 
 Messages that arrive:
 
 | MessageKind | From | Becomes |
 |---|---|---|
 | `TASK_EVENT` | AsyncFlow / local act | `state.runtime[uid]`, plus `result.{uid}` or `error.{uid}` |
-| `SNAPSHOT` | a child operator | mirrored `child:{id}:*` keys |
+| `SNAPSHOT` | a child operator | mirrored child observations & metrics |
 | `DIRECTIVE` | the parent operator | `state.directives` |
 | `STOP` | system | ends the loop |
 
@@ -57,15 +56,15 @@ operator exits — stopping does not discard the final batch.
 
 ## ACT — apply the decision
 
-Each `Action` is applied by `_apply_one`, which is execution-strategy-agnostic: it calls the `@act`
-method, inspects the return, and routes accordingly.
+Each `Action` is applied independently of *how* it executes: the operator calls the named `@act`
+method, inspects what it returns, and routes accordingly.
 
 ```mermaid
 flowchart TB
-    P["policy decides → Action(SPAWN_TASK, &quot;dock&quot;, kwargs)"] --> AO["_apply_one"]
-    AO --> R["fn = registry[&quot;dock&quot;]<br/>deps = resolve(act.depends_on)<br/>result = await fn(self, *deps, **kwargs)"]
-    R -->|Future| F["track future<br/>+ done-callback"]
-    R -->|plain value| V["inbox.put_nowait<br/>(TASK_EVENT{DONE})"]
+    P["policy decides → Action(SPAWN_TASK, &quot;dock&quot;, kwargs)"] --> AO["apply the action"]
+    AO --> R["call the @act &quot;dock&quot;<br/>with its kwargs and resolved depends_on"]
+    R -->|returns a Future| F["track it; result arrives next cycle"]
+    R -->|returns a plain value| V["deliver to the inbox; visible next cycle"]
 ```
 
 ## The one-cycle latency
@@ -73,8 +72,8 @@ flowchart TB
 This is the rule that governs policy design: **a task dispatched in cycle N produces a result in
 cycle N+1.**
 
-- An async task's done-callback fires `inbox.put_nowait(TASK_EVENT)` — drained next cycle.
-- A local act's return value is *also* delivered via `put_nowait` — same one-cycle latency.
+- An async task's result is delivered to the inbox when it completes — picked up next cycle.
+- A local act's return value is delivered to the inbox the same way — same one-cycle latency.
 
 So `@observe` in cycle N sees results from work dispatched in cycle N−1. A policy that assumes its
 own freshly-spawned task is already done will misfire — gate on observed state instead (e.g.

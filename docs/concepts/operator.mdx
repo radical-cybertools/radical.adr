@@ -33,8 +33,7 @@ class SearchOperator(Operator):
         ...
 ```
 
-The decorators are registered **once at class-definition time** via `__init_subclass__` — there is
-no per-instance setup. Annotated class attributes (`center`, `radius`) become persistent objectives:
+The decorators are registered **once at class-definition time** — there is no per-instance setup. Annotated class attributes (`center`, `radius`) become persistent objectives:
 writing `self.radius = 2.5` transparently writes to `state.objectives["radius"]`, and the value is
 visible in every later `snapshot.objectives`.
 

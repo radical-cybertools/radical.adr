@@ -43,7 +43,7 @@ Built via the `ActionSet`, not by hand. Key fields:
 | `task_name` | `@act` name, or child name for operator kinds. |
 | `task_kwargs` | kwargs passed to the act / child config. |
 | `depends_on` | `list[str]` — task **UIDs** (`SPAWN_TASK`) or child **names** (`SPAWN_OPERATOR`/`RESTART_OPERATOR`). |
-| `operator_cls` / `policy` | Live references for `SPAWN_OPERATOR` (`exclude=True`, not serialized). |
+| `operator_cls` / `policy` | Live references for `SPAWN_OPERATOR` (not serialized). |
 
 ## `ActionSet`
 

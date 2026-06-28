@@ -82,7 +82,7 @@ shows `Policy(primary=MockLLMPolicy(), fallback=ProteinDesignPolicy(op))`.
 
 ## Usage bookkeeping
 
-`record_usage(tokens=, latency=, cost=)` appends to a bounded `usage_history` deque (maxlen 256).
+`record_usage(tokens=, latency=, cost=)` appends to a bounded `usage_history`.
 
 <Note>
 Usage data is **purely local** to the policy — it never flows through `state`, `snapshot`, or

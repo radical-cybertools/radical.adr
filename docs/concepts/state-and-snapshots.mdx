@@ -11,15 +11,15 @@ across coroutines.
 
 | Namespace | Contents | Lifetime |
 |-----------|----------|----------|
-| `observations` | Task results (`result.{uid}`), task errors (`error.{uid}`), child per-cycle obs (`child:{id}:{k}`) | **Cleared each cycle** |
+| `observations` | Task results (`result.{uid}`), task errors (`error.{uid}`), mirrored child observations | **Cleared each cycle** |
 | `runtime` | UID → `PENDING` / `RUNNING` / `DONE` / `FAILED` / `CANCELED` | Persists |
 | `objectives` | Annotated operator attrs, policy params, mirrored child runtime/objectives | Persists |
 | `artifacts` | Stable identifiers, file paths | Persists |
 | `directives` | Instructions from a parent | **Cleared each cycle** |
 | `task_context` | `uid → {name, kwargs}` for every spawned task | Persists |
 
-Live references that are **not** part of `Snapshot`: `task_futures: dict[str, Future]` and
-`history: deque[Snapshot]` (maxlen 64).
+The operator also holds runtime-only handles — the live task Futures it is tracking and a bounded
+history of recent snapshots. These are **not** part of the serializable `Snapshot`.
 
 ## Transparent state proxying
 
@@ -72,17 +72,13 @@ def extract(self, snapshot) -> dict:
 
 ## Child state propagation
 
-When a child sends a `SNAPSHOT`, the parent merges three key families. The child's *per-cycle*
-observations mirror into the parent's per-cycle `observations`; its *persistent* runtime and
-objectives mirror into the parent's persistent `objectives` (latest-wins), so the latest child
-metrics survive across parent cycles:
+When a child reports back, its state mirrors into the parent's. The child's **per-cycle**
+observations mirror into the parent's per-cycle `observations`; its **persistent** runtime statuses
+and objectives mirror into the parent's persistent `objectives` (latest-wins), so the latest child
+metrics survive across parent cycles.
 
-- `observations["child:{id}:{k}"]` — child task results (per-cycle)
-- `objectives["child:{id}:runtime:{k}"]` — child task statuses (persistent)
-- `objectives["child:{id}:obj:{k}"]` — child objectives like radius, center (persistent)
-
-You rarely read these directly — a [`ChildHandle`](/guides/hierarchical-operators) reads them for
-you (`obs["explorer"].radius`).
+You don't read these mirrored values directly — a [`ChildHandle`](/guides/hierarchical-operators)
+reads them for you (`obs["explorer"].radius`, `obs["explorer"].done`).
 
 ## Next
 

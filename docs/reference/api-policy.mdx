@@ -43,7 +43,7 @@ Thin `Policy` subclass for LLM-driven policies. Subclass it and add `@decide`. S
 |---|---|---|
 | `render_observation(obs)` | `(dict) -> str` | Convert obs to a prompt string. Default: JSON dump. |
 | `record_usage(...)` | `(*, tokens=None, latency=None, cost=None) -> None` | Append one entry to `usage_history`. |
-| `usage_history` | `deque` (maxlen 256) | Local-only bookkeeping; never flows through state/snapshot/observe. |
+| `usage_history` | bounded list | Local-only bookkeeping; never flows through state/snapshot/observe. |
 
 ## `ChainPolicy`
 

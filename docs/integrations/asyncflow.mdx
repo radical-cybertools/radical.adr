@@ -65,7 +65,7 @@ cancel operators or tasks at runtime, your AsyncFlow build must include it:
 
 | Feature | ADR usage |
 |---------|-----------|
-| `future.state` attribute | `_sync_running_states` polls for `PENDING → RUNNING` transitions |
+| `future.state` attribute | ADR polls it to detect `PENDING → RUNNING` transitions |
 | Block-cancellation propagation | Cancelling an operator's block also cancels its spawned tasks |
 | `workflow_id` kwarg | Task attribution (passed by `@act` methods) |
 | `patched_cancel` fix | `future.cancel()` returns a bool, not a method reference |

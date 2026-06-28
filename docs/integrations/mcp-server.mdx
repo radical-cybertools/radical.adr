@@ -40,14 +40,14 @@ into a mutation and **places it on the operator's inbox** as a `CUSTOM` message:
 flowchart LR
     C["MCP client"] -->|tool call| H["handler"]
     H --> I["operator.inbox.put(CUSTOM{mutation})"]
-    I -->|next cycle| D["_drain_inbox applies it"]
+    I -->|next cycle| D["the operator drains and applies it"]
 ```
 
 The handler returns `{"status": "queued", "tool": ...}` immediately; the operator picks the mutation
 up on its next cycle. This keeps the [sacred boundary](/get-started/mental-model#the-sacred-boundary)
 intact — external input arrives through the **one input channel** (the inbox), never as an
-out-of-band state mutation. A failing tool call is caught, logged via `log.exception`, and returned
-as `{"status": "error", "detail": ...}`.
+out-of-band state mutation. A failing tool call is caught, logged, and returned as
+`{"status": "error", "detail": ...}`.
 
 ## Relationship to LLM policies
 

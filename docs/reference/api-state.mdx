@@ -13,7 +13,7 @@ coroutines.
 
 | Field | Lifetime | Contents |
 |---|---|---|
-| `observations` | cleared each cycle | `result.{uid}`, `error.{uid}`, `child:{id}:{k}` |
+| `observations` | cleared each cycle | `result.{uid}`, `error.{uid}`, mirrored child observations |
 | `runtime` | persists | `uid → PENDING/RUNNING/DONE/FAILED/CANCELED` |
 | `objectives` | persists | annotated attrs, policy params, mirrored child state |
 | `artifacts` | persists | stable ids, file paths |
@@ -25,14 +25,14 @@ coroutines.
 
 ## `RuntimeState`
 
-The mutable backing store the operator owns. `Snapshot` is its frozen view. Live references not in
-the snapshot: `task_futures: dict[str, Future]` and `history: deque[Snapshot]` (maxlen 64). User
-code reads state through `Snapshot` and writes it through attribute assignment or `UPDATE_PARAM` —
-not directly.
+The mutable backing store the operator owns. `Snapshot` is its frozen view. It also holds
+runtime-only handles not in the snapshot — the live task Futures it is tracking and a bounded history
+of recent snapshots. User code reads state through `Snapshot` and writes it through attribute
+assignment or `UPDATE_PARAM` — not directly.
 
 ## Messaging
 
-The inbox (`asyncio.Queue`) is the only input channel.
+The inbox is the only input channel.
 
 ### `MessageKind`
 

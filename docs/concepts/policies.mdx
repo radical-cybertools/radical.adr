@@ -57,8 +57,8 @@ op.policy = Policy(primary=MockLLMPolicy(), fallback=ProteinDesignPolicy(op))
 `@decide` method that calls a model:
 
 - `render_observation(obs)` — convert the obs dict to a prompt string (default: JSON dump).
-- `record_usage(tokens=, latency=, cost=)` — append one entry to a bounded `usage_history` deque
-  (maxlen 256), called manually after your vendor call.
+- `record_usage(tokens=, latency=, cost=)` — append one entry to a bounded `usage_history`, called
+  manually after your vendor call.
 
 ```python
 class OpenRouterPolicy(LLMPolicy):
