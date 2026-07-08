@@ -5,7 +5,7 @@ description: "The execution layer below ADR — engine, function_task, blocks, a
 
 ADR steers; [AsyncFlow](https://github.com/radical-cybertools/radical.asyncflow) runs. Every `@act`
 that returns a Future dispatched it through AsyncFlow, which executes it on a backend (a local
-executor, or RADICAL-Pilot on an HPC cluster). ADR never reaches below this API — that is the
+executor, or RHAPSODY on an HPC cluster). ADR never reaches below this API — that is the
 [sacred boundary](/get-started/mental-model#the-sacred-boundary).
 
 ## Engine construction

@@ -8,8 +8,8 @@ check it against this list first.
 
 ## The sacred boundary
 
-The Operator **only Observes, Decides, and Acts.** It never owns scheduling, execution lifecycle, or
-distributed resources. AsyncFlow owns workflow execution; RHAPSODY / RADICAL-Pilot own task
+The Operator **only Set Goals, Observes, Decides, and Acts.** It never owns scheduling, execution lifecycle, or
+distributed resources. AsyncFlow owns workflow execution; RHAPSODY own task
 execution. Even `spawn_operator` / `cancel_operator` / `cancel_task` are *steering* — they delegate
 to `child.start(*futures)` and `future.cancel()`. See
 [Mental model](/get-started/mental-model#the-sacred-boundary).

@@ -56,7 +56,7 @@ for this one-cycle latency is the single most important habit when writing polic
 
 ## The sacred boundary
 
-This is the rule that defines ADR. The operator **only Observes, Decides, and Acts.** It never
+This is the rule that defines ADR. The operator **only Set Goals, Observes, Decides, and Acts.** It never
 owns scheduling, execution lifecycle, or distributed resources.
 
 | ADR **only** | ADR **never** |
@@ -67,7 +67,7 @@ owns scheduling, execution lifecycle, or distributed resources.
 
 Even the verbs that *look* like control — `spawn_operator`, `cancel_operator`, `cancel_task` — are
 steering, not running: they delegate to `child.start(*futures)` and `future.cancel()`. AsyncFlow
-owns workflow execution; RHAPSODY / RADICAL-Pilot own task execution. ADR decides; the layers below
+owns workflow execution; RHAPSODY own task execution. ADR decides; the layers below
 run.
 
 Why it matters: keeping ADR on the steering side of this line is what lets the same operator code
