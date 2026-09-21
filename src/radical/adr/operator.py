@@ -41,6 +41,7 @@ import time
 import warnings
 from typing import TYPE_CHECKING, Any, AsyncIterator, Callable
 
+from radical.adr.boundary import Budget, Tunable
 from radical.adr.decision import Action, ActionKind, Decision
 from radical.adr.errors import ActionError, PolicyError
 from radical.adr.goals import AllGoal, AnyGoal, _GoalGroup, goal_from_dict, goal_to_dict
@@ -65,7 +66,8 @@ _RESERVED = frozenset({
     "operator_id", "engine", "parent", "observer",
     "state", "inbox", "children", "_child_starts", "_child_config",
     "_stop_event", "_adl_actionset", "_policy", "_runtime_goals", "_block_factory",
-    "_max_cycles", "_max_runtime", "_started_at", "_goal_streaks",
+    "_max_cycles", "_max_runtime", "_started_at", "_goal_streaks", "_budget",
+    "_pending_rejections", "decide_when",
 })
 
 
@@ -276,6 +278,14 @@ class Operator:
     _adl_observe_fn:     Callable | None      = None
     _adl_goals_fn:       Callable | None      = None
     _adl_state_keys:     set[str]             = set()
+    _adl_tunables:       dict[str, Tunable]   = {}
+
+    # Decision cadence: when to consult the policy. None = every cycle (default).
+    # "idle" = only when nothing is in flight (captures bootstrap + post-result,
+    # skips mid-task cycles). "new_result" = only when a task result was recorded
+    # this cycle. On skipped cycles ADR applies an empty decision; goals and budgets
+    # are still checked, so the operator can still self-stop. Set on the subclass.
+    decide_when: "str | None" = None
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
         super().__init_subclass__(**kwargs)
@@ -293,6 +303,16 @@ class Operator:
             if callable(val) and getattr(val, "_adl_goals", False):
                 cls._adl_goals_fn = val
 
+        # Tunables: class attributes whose value is a Tunable (annotated or not).
+        # They are the declared adaptation boundary — one source of truth for the
+        # seeded default, bound validation, observation, and the agent schema.
+        tunables: dict[str, Tunable] = {}
+        for klass in reversed(cls.__mro__):          # base first so subclass overrides win
+            for aname, raw in vars(klass).items():
+                if isinstance(raw, Tunable):
+                    tunables[aname] = raw
+        cls._adl_tunables = tunables
+
         # Collect annotated class attributes that represent operator state
         state_keys: set[str] = set()
         for klass in cls.__mro__:
@@ -302,6 +322,7 @@ class Operator:
                         and aname not in _RESERVED
                         and not isinstance(raw, (classmethod, staticmethod, property))):
                     state_keys.add(aname)
+        state_keys |= set(tunables)                  # tunables are proxied state too
         cls._adl_state_keys = state_keys
 
     # ── Constructor ───────────────────────────────────────────────────────────
@@ -317,6 +338,7 @@ class Operator:
         observer:      "ObserverBase | None" = None,
         max_cycles:    int | None            = None,
         max_runtime:   float | None          = None,
+        budget:        "list[Budget] | None" = None,
     ) -> None:
         object.__setattr__(self, "operator_id",  operator_id or type(self).__name__)
         object.__setattr__(self, "engine",       engine)
@@ -334,6 +356,8 @@ class Operator:
         object.__setattr__(self, "_max_runtime",   max_runtime)   # wall-clock cap (seconds)
         object.__setattr__(self, "_started_at",    None)          # set at run() start
         object.__setattr__(self, "_goal_streaks",  {})            # goal name → consecutive-satisfied
+        object.__setattr__(self, "_budget",        list(budget) if budget else [])
+        object.__setattr__(self, "_pending_rejections", {})       # param → rejection evidence
 
         object.__setattr__(self, "_policy",        policy)
         object.__setattr__(self, "_runtime_goals", [])
@@ -353,7 +377,8 @@ class Operator:
             for klass in type(self).__mro__:
                 raw = vars(klass).get(key, _MISSING)
                 if raw is not _MISSING and not callable(raw):
-                    self.state.objectives[key] = raw
+                    # A Tunable seeds its scalar default, not the descriptor itself.
+                    self.state.objectives[key] = raw.default if isinstance(raw, Tunable) else raw
                     break
 
     # ── State proxy ───────────────────────────────────────────────────────────
@@ -424,6 +449,25 @@ class Operator:
             )
         return await policy.decide(obs)
 
+    def _should_decide(self, snapshot: Snapshot) -> bool:
+        """Whether to consult the policy this cycle, per ``decide_when``.
+
+        Gates policy consultation only — ADR still owns the loop. On a skipped
+        cycle the caller applies an empty Decision, so in-flight work continues and
+        goal/budget checks still run.
+        """
+        mode = self.decide_when
+        if mode is None:
+            return True
+        if mode == "idle":
+            return self.inflight == 0
+        if mode == "new_result":
+            return bool(snapshot.results)
+        raise ValueError(
+            f"Operator '{self.operator_id}': decide_when must be None, 'idle', or "
+            f"'new_result', got {mode!r}"
+        )
+
     def _check_goals(self, obs: dict, snapshot: Snapshot, decision: Decision) -> None:
         """Force stop if all active goals (static + runtime) are satisfied."""
         goals_fn = type(self)._adl_goals_fn
@@ -474,18 +518,74 @@ class Operator:
         streaks[goal.name] = streak
         return streak >= getattr(goal, "for_cycles", 1)
 
+    def _static_goal_identity(self) -> "tuple[set[str], set[str]]":
+        """Names and metrics of the static @goals goals (the authoritative objective).
+
+        Used to stop a policy from shadowing the scientist's goal with a runtime goal
+        of the same name or on the same metric — which could let the agent relax or
+        block its own convergence. Returns (names, metrics).
+        """
+        goals_fn = type(self)._adl_goals_fn
+        if goals_fn is None:
+            return set(), set()
+        raw = goals_fn(self)
+        names: set[str] = set()
+        metrics: set[str] = set()
+
+        def _walk(g) -> None:
+            if isinstance(g, _GoalGroup):
+                names.add(g.name)
+                for sub in g.goals:
+                    _walk(sub)
+            else:
+                names.add(g.name)
+                metrics.add(g.metric)
+
+        for g in (raw if isinstance(raw, list) else [raw]):
+            _walk(g)
+        return names, metrics
+
     def _apply_goal_changes(self, decision: Decision) -> None:
-        """Upsert / remove runtime goals proposed by the policy."""
+        """Upsert / remove runtime goals proposed by the policy.
+
+        A runtime goal that shadows a static @goals goal — same name, or same metric —
+        is rejected (dropped + logged): the authoritative objective stays outside the
+        agent's reach. The agent may still add stricter goals on *other* metrics.
+        """
         runtime: list = object.__getattribute__(self, "_runtime_goals")
         if decision.remove_goals:
             names = set(decision.remove_goals)
             runtime[:] = [g for g in runtime if g.name not in names]
+        static_names, static_metrics = self._static_goal_identity()
         for new_goal in decision.goals:
+            metric = getattr(new_goal, "metric", None)
+            if new_goal.name in static_names or (metric is not None and metric in static_metrics):
+                log.warning("operator '%s': runtime goal '%s' (metric=%s) shadows a static "
+                            "goal -> rejected", self.operator_id, new_goal.name, metric)
+                continue
             idx = next((i for i, g in enumerate(runtime) if g.name == new_goal.name), None)
             if idx is not None:
                 runtime[idx] = new_goal
             else:
                 runtime.append(new_goal)
+
+    def _check_budgets(self, obs: dict, snapshot: Snapshot) -> None:
+        """Stop the run when any resource/deadline budget is exhausted.
+
+        Budgets are evaluated independently of ``_check_goals`` — they are stop
+        conditions, not part of the convergence condition — so no goal composition
+        can keep the run alive past its budget. The watched metric is read from the
+        ``@observe`` dict first, then from ``snapshot.objectives``.
+        """
+        budgets: list = object.__getattribute__(self, "_budget")
+        for b in budgets:
+            value = obs.get(b.metric)
+            if value is None:
+                value = snapshot.objectives.get(b.metric)
+            if b.exhausted(value):
+                log.info("operator '%s': budget '%s' %s %s reached (value=%s) -> stopping",
+                         self.operator_id, b.metric, b.direction, b.limit, value)
+                self._stop_event.set()
 
     @property
     def runtime_goals(self) -> list:
@@ -502,6 +602,26 @@ class Operator:
         """
         return sum(1 for s in self.state.runtime.values()
                    if s in ("PENDING", "RUNNING"))
+
+    @property
+    def tunables(self) -> "dict[str, Any]":
+        """Current values of the declared adaptation boundary — ``{name: value}``.
+
+        Surface it in ``@observe`` (e.g. ``**self.tunables``) so a policy sees exactly
+        which knobs it may turn and their present values, from the same declaration
+        that validates its writes.
+        """
+        objs = object.__getattribute__(self, "state").objectives
+        return {name: objs.get(name) for name in type(self)._adl_tunables}
+
+    @property
+    def rejections(self) -> "list[dict]":
+        """Boundary rejections not yet seen by a decision (each: param/requested/reason/bounds).
+
+        A refused ``update_param`` lands here and persists across cadence-skipped
+        cycles until the policy is next consulted, so the agent always sees it.
+        """
+        return list(object.__getattribute__(self, "_pending_rejections").values())
 
     @property
     def cycle_history(self) -> "list[Snapshot]":
@@ -523,6 +643,77 @@ class Operator:
         # history[-1] is the current cycle's snapshot (appended by snapshot() before
         # @observe runs) — exclude it so @observe can compare past cycles to the present.
         return list(history)[:-1] if history else []
+
+    # ── Evidence helpers (read-only) ──────────────────────────────────────────
+
+    def _metric_series(self, metric: str, eps: float) -> "list[float]":
+        """Successive values of ``metric`` with consecutive near-duplicates collapsed.
+
+        A trial spans many fast idle cycles that all repeat the same objective value,
+        so raw per-cycle values are mostly flat. Collapsing consecutive values that
+        differ by <= ``eps`` yields the per-change series (e.g. one point per trial),
+        which is what "trend" and "stall" are actually about. Reads each metric from
+        ``snapshot.objectives`` (fallback ``observations``) across ``cycle_history``,
+        then the current live value.
+        """
+        raw: list[float] = []
+        for snap in self.cycle_history:
+            v = snap.objectives.get(metric)
+            if v is None:
+                v = snap.observations.get(metric)
+            if v is not None:
+                raw.append(float(v))
+        cur = self.state.objectives.get(metric)
+        if cur is None:
+            cur = self.state.observations.get(metric)
+        if cur is not None:
+            raw.append(float(cur))
+        series: list[float] = []
+        for v in raw:
+            if not series or abs(v - series[-1]) > eps:
+                series.append(v)
+        return series
+
+    def trend(self, metric: str, direction: str, *, eps: float = 1e-9) -> str:
+        """Scientific trend of ``metric``: ``"improving"`` / ``"flat"`` / ``"regressing"``.
+
+        ``direction`` ("maximize" or "minimize") is **required** — it is what turns a
+        numeric change into a scientific judgement (rising ``eval_loss`` is regressing,
+        rising ``success_rate`` is improving). It is not inferred from goals, since
+        auxiliary metrics need not have one. Compares the two most recent distinct
+        values (see ``_metric_series``); ``eps`` is the caller's "what counts as a
+        change" threshold.
+        """
+        if direction not in ("maximize", "minimize"):
+            raise ValueError(f"trend direction must be 'maximize' or 'minimize', got {direction!r}")
+        series = self._metric_series(metric, eps)
+        if len(series) < 2:
+            return "flat"
+        rising = (series[-1] - series[-2]) > 0
+        improving = rising if direction == "maximize" else not rising
+        return "improving" if improving else "regressing"
+
+    def stalled(self, metric: str, direction: str, n: int, *, eps: float = 1e-9) -> bool:
+        """True when ``metric`` has not improved for the last ``n`` distinct values.
+
+        Mirrors a "cycles-since-best-improved >= n" stall counter, but over the
+        per-change series so idle cycles don't inflate it. ``direction`` defines what
+        "improve" means; ``n`` >= 1.
+        """
+        if direction not in ("maximize", "minimize"):
+            raise ValueError(f"stalled direction must be 'maximize' or 'minimize', got {direction!r}")
+        if n < 1:
+            raise ValueError(f"stalled n must be >= 1, got {n}")
+        series = self._metric_series(metric, eps)
+        if not series:
+            return False
+        better = ((lambda a, b: a > b + eps) if direction == "maximize"
+                  else (lambda a, b: a < b - eps))
+        best, last_improve = series[0], 0
+        for i, v in enumerate(series[1:], start=1):
+            if better(v, best):
+                best, last_improve = v, i
+        return (len(series) - 1 - last_improve) >= n
 
     # ── Hierarchy ─────────────────────────────────────────────────────────────
 
@@ -617,6 +808,11 @@ class Operator:
                 await self._drain_inbox()                           # 1. RUN
                 log.debug("cycle %d: drained inbox", self.state.cycle)
 
+                # Surface any pending boundary rejections into this cycle's evidence,
+                # so the snapshot/@observe see them until a decision consumes them.
+                for _k, _info in object.__getattribute__(self, "_pending_rejections").items():
+                    self.state.observations[f"rejected_param.{_k}"] = _info
+
                 snapshot   = self.state.snapshot()
                 observe_fn = type(self)._adl_observe_fn             # 2. OBSERVE
                 if observe_fn is None:
@@ -634,12 +830,20 @@ class Operator:
                     )
                 log.debug("cycle %d: observed %d keys", self.state.cycle, len(obs))
 
-                try:
-                    decision = await self._decide(obs)              # 3. DECIDE
-                except Exception as exc:
-                    raise PolicyError(
-                        f"Operator '{self.operator_id}' policy raised on cycle {self.state.cycle}"
-                    ) from exc
+                if self._should_decide(snapshot):                   # 3. DECIDE
+                    try:
+                        decision = await self._decide(obs)
+                    except Exception as exc:
+                        raise PolicyError(
+                            f"Operator '{self.operator_id}' policy raised on cycle {self.state.cycle}"
+                        ) from exc
+                    # The policy has now seen any rejections (via obs) — consume them,
+                    # before ACT can record new ones for the next decision.
+                    object.__getattribute__(self, "_pending_rejections").clear()
+                else:
+                    decision = Decision()                           # cadence-skipped cycle
+
+
 
                 self._check_goals(obs, snapshot, decision)
                 self._apply_goal_changes(decision)
@@ -673,6 +877,10 @@ class Operator:
                     log.info("operator '%s': max_runtime %.1fs reached -> stopping",
                              self.operator_id, mr)
                     self._stop_event.set()
+
+                # Resource/deadline budgets — independent of goal composition, so an
+                # unsatisfiable runtime goal can never keep the run alive past its budget.
+                self._check_budgets(obs, snapshot)
 
                 if decision.stop:
                     break
@@ -1165,7 +1373,42 @@ class Operator:
         elif act.kind == ActionKind.UPDATE_PARAM:
             if act.param_key is None:
                 raise ActionError("UPDATE_PARAM requires param_key")
-            self.state.objectives[act.param_key] = act.param_value
+            self._apply_param_update(act.param_key, act.param_value)
+
+    def _apply_param_update(self, key: str, value: Any) -> None:
+        """Apply an agent UPDATE_PARAM through the declared adaptation boundary.
+
+        With no ``Tunable`` declared the write is permissive (unchanged behavior).
+        When a boundary is declared, a write to a non-tunable key or an out-of-bound
+        value is **rejected**, not silently clamped or dropped: the requested value is
+        never altered, and the refusal is surfaced as evidence (``_reject_param``) so
+        the agent sees it next cycle and can re-decide.
+        """
+        tunables = type(self)._adl_tunables
+        if not tunables:                                   # no boundary → permissive
+            self.state.objectives[key] = value
+            return
+        t = tunables.get(key)
+        if t is None:                                      # not a permitted knob (frozen)
+            self._reject_param(key, value, "not_tunable", None)
+            return
+        accepted, reason = t.validate(value)
+        if reason is not None:
+            self._reject_param(key, value, reason, t)
+            return
+        self.state.objectives[key] = accepted
+
+    def _reject_param(self, key: str, value: Any, reason: str, tunable: "Tunable | None") -> None:
+        """Record a refused param write as evidence (persists until the next decision)."""
+        info = {
+            "param":     key,
+            "requested": value,
+            "reason":    reason,
+            "bounds":    [tunable.low, tunable.high] if tunable is not None else None,
+        }
+        object.__getattribute__(self, "_pending_rejections")[key] = info
+        log.warning("operator '%s': update_param('%s', %r) rejected (%s)",
+                    self.operator_id, key, value, reason)
 
     async def _spawn_operator(self, act: Action) -> asyncio.Future | None:
         """Launch a child operator as a block, registering it on first use.

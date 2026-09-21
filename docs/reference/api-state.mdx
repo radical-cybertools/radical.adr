@@ -23,6 +23,13 @@ coroutines.
 
 **Task error shape** — `observations["error.{uid}"]` is `{"task_name": str, "message": str, "type": str}`.
 
+### Read-only views
+
+| Property | Returns | Contents |
+|---|---|---|
+| `results` | `list` | This cycle's task-result payloads (`result.{uid}`), in completion-drain order. Deliberately **not** a semantic "latest" — several tasks can settle in one cycle. Under `decide_when="idle"` there is exactly one, so `results[0]` is unambiguous. |
+| `rejections` | `list` | This cycle's boundary rejections (`rejected_param.{name}`) — a refused `update_param` surfaced as evidence. See [api-boundary](/reference/api-boundary). |
+
 ## `RuntimeState`
 
 The mutable backing store the operator owns. `Snapshot` is its frozen view. It also holds

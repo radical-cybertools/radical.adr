@@ -11,11 +11,37 @@ Six validated gaps from downstream (Campaign Manager) integration feedback, each
 assessed against source and landed as small, additive changes, plus first-class child
 operators (`SPAWN_OPERATOR` / `add_child` / `ChildHandle`) with declarative,
 runtime-owned lifecycle verbs (idempotent `spawn_operator`, `restart_operator`,
-`cancel_operator`), user-facing `enable_logging(...)`, and a 7-item API-hardening pass
+`cancel_operator`), user-facing `enable_logging(...)`, a 7-item API-hardening pass
 (task pruning, `retry_task`, `max_runtime`/`inflight`, `AnyGoal`/`AllGoal`/`for_cycles`, fuller LLM
-schema, hierarchical replay, checkpoint/resume). Full suite: 120 passing.
+schema, hierarchical replay, checkpoint/resume), and a domain-agnostic adaptation-boundary layer
+(`Tunable`, `Budget`, `decide_when`, evidence helpers) distilled from a real offline-RL steering
+use case. Full suite: 144 passing.
 
 ### Added
+
+- **Adaptation boundary, budgets & evidence helpers (additive / opt-in; new module
+  `radical.adr.boundary`, exported from the package root).** Distilled from a real offline-RL steering
+  workload (`examples/antmaze-offline-rl/`), all domain-agnostic.
+  - **`Tunable(default, low, high, *, int=False, step=None)`** — declares a bounded, agent-tunable
+    parameter as an operator class attribute. One declaration is the single source of truth: ADR seeds
+    the scalar default, **validates** every agent `update_param` against the bounds at the
+    `UPDATE_PARAM` seam (out-of-bounds / non-`int` / off-`step`, or a write to a non-`Tunable` key, is
+    **rejected and surfaced as evidence** — never silently clamped or dropped, never aborts the cycle),
+    exposes `self.tunables`, and renders the bounds into the agent tool schema (`get_schema`).
+    Operator-internal writes bypass the boundary — only agent `UPDATE_PARAM` is gated.
+  - **`Budget(metric, limit, direction="max")`** via `Operator(..., budget=[...])` — a
+    resource/deadline stop checked beside `max_runtime`, **outside** goal checking, so no goal
+    composition (an unsatisfiable agent-added runtime goal) can block termination. It is not a `Goal`
+    and does not change convergence semantics.
+  - **`decide_when = "idle" | "new_result"`** (operator class attr) — gates *when* the policy is
+    consulted; skipped cycles still run `@observe`, goals, and budgets. Not a loop construct.
+  - **Evidence helpers** — `Snapshot.results` / `Snapshot.rejections` (read-only views over
+    `observations`); `Operator.trend(metric, direction)` / `stalled(metric, direction, n)`
+    (direction-aware, over the *distinct* value series so idle-cycle repeats don't skew them).
+  - **Static-goal shadow guard** — a runtime goal reusing a static `@goals` goal's `name` or `metric`
+    is rejected, keeping the authoritative objective outside the agent's reach (no `Goal(source=…)`).
+  - Deferred (documented, not built): a cross-run outcome hook, and usage/cost rollup (provider prices
+    stay in the app, not core).
 
 - **API hardening (7 additive/opt-in items; no existing behavior changes unless opted in).**
   - **Bounded task tracking** — terminal task Futures are now pruned from `state.task_futures`

@@ -39,6 +39,30 @@ class Snapshot(BaseModel, frozen=True):
         """uid → status for all tracked tasks."""
         return {k: v for k, v in self.runtime.items() if not k.startswith("cpu_")}
 
+    @property
+    def results(self) -> list[Any]:
+        """Task-result payloads recorded this cycle, in completion-drain order.
+
+        A faithful "what completed this cycle" view — deliberately NOT a semantic
+        "latest": under a dispatch-many pattern several tasks can resolve in one
+        cycle, and dictionary order is recording order, not a completion-time
+        guarantee. For the common one-trial-per-decision pattern, gate the loop
+        with ``decide_when="idle"``; this list then holds exactly one element and
+        ``results[0]`` is unambiguous.
+        """
+        return [v for k, v in self.observations.items() if k.startswith("result.")]
+
+    @property
+    def rejections(self) -> list[Any]:
+        """Boundary rejections recorded this cycle (keys ``rejected_param.<name>``).
+
+        An out-of-bounds or otherwise-refused ``update_param`` from the policy is
+        not applied silently; it is surfaced here so the next ``@observe`` (and the
+        agent) can see what was refused and why, and re-decide.
+        """
+        return [v for k, v in self.observations.items()
+                if k.startswith("rejected_param.")]
+
 
 class RuntimeState:
     """Live, mutable state owned by one operator.

@@ -18,6 +18,7 @@ Operator(
     observer=None,
     max_cycles=None,
     max_runtime=None,
+    budget=None,
 )
 ```
 
@@ -32,8 +33,18 @@ objectives (proxied to `state.objectives`).
 | `parent` | `Operator \| None` | Set automatically for child operators. |
 | `inbox_maxsize` | `int` | Max size of the operator's inbox (0 = unbounded). |
 | `observer` | `ObserverBase \| None` | Lifecycle observer. |
-| `max_cycles` | `int \| None` | Safety valve — force stop after N cycles. |
-| `max_runtime` | `float \| None` | Safety valve — force stop after N wall-clock seconds. |
+| `max_cycles` | `int \| None` | Stop condition — force stop after N cycles. |
+| `max_runtime` | `float \| None` | Stop condition — force stop after N wall-clock seconds. |
+| `budget` | `list[Budget] \| None` | Stop condition(s) on observed metrics, evaluated independently of goal state. See [api-boundary](/reference/api-boundary). |
+
+### Class attributes
+
+Set on the subclass (not passed to `__init__`):
+
+| Attribute | Type | Meaning |
+|---|---|---|
+| `decide_when` | `str \| None` | Cadence gate. `None` (default) consults the policy every cycle; `"idle"` only when `inflight == 0`; `"new_result"` only when a task result landed this cycle. On skipped cycles `@observe`, goals, and budgets still run. |
+| *(any)* `= Tunable(...)` | `Tunable` | Declares a bounded, agent-tunable parameter — the adaptation boundary. See [api-boundary](/reference/api-boundary). |
 
 ### Methods
 
@@ -48,6 +59,8 @@ objectives (proxied to `state.objectives`).
 | `child(name)` | `ChildHandle` | Read-only handle to a declared child. |
 | `save_checkpoint(path)` | — | Serialize steering state (cycle, objectives, goals, task_context, child metadata) to JSON. |
 | `load_checkpoint(path)` | — | Restore steering state onto a freshly constructed operator, then `run()` to resume. |
+| `trend(metric, direction, *, eps=1e-9)` | `str` | `"improving"`/`"flat"`/`"regressing"` over the metric's distinct value history. `direction` (`"maximize"`/`"minimize"`) is required. |
+| `stalled(metric, direction, n, *, eps=1e-9)` | `bool` | Whether the metric failed to improve across its last `n` distinct values. |
 
 ### Attributes
 
@@ -58,6 +71,8 @@ objectives (proxied to `state.objectives`).
 | `policy` | The attached `Policy`. |
 | `cycle_history` | `list[Snapshot]` of previous completed cycles (read in `@observe`). |
 | `inflight` | `int` — count of tasks with status `PENDING` or `RUNNING`. Surface it in `@observe` (`"inflight": self.inflight`) to self-throttle, or target it with a `Goal`. |
+| `tunables` | `dict` — current `{name: value}` of the declared `Tunable` boundary. |
+| `rejections` | `list` — boundary rejections pending until the next decision consumes them. |
 
 ## Decorators
 
@@ -84,4 +99,5 @@ Read-only view returned by `op.child(name)`. See
 ## See also
 
 - [api-policy](/reference/api-policy) · [api-decision](/reference/api-decision) ·
-  [api-goals](/reference/api-goals) · [api-state](/reference/api-state)
+  [api-goals](/reference/api-goals) · [api-boundary](/reference/api-boundary) ·
+  [api-state](/reference/api-state)

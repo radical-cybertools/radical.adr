@@ -53,6 +53,8 @@ Quick-start::
         await engine.shutdown()
 """
 
+from radical.adr.boundary import Budget
+from radical.adr.boundary import Tunable
 from radical.adr.decision import Action
 from radical.adr.decision import ActionKind
 from radical.adr.decision import Decision
@@ -101,6 +103,9 @@ __all__ = [
     "Goal",
     "AnyGoal",
     "AllGoal",
+    # Boundaries
+    "Budget",
+    "Tunable",
     # Messages
     "InboxMessage",
     "MessageKind",

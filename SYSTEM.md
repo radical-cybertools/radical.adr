@@ -85,6 +85,13 @@ class SearchOperator(Operator):
 | `start(*dep_futures)` | Registers `run_to_completion()` as an `engine.block`; returns the block `Future`. Used for operator-level DAG chaining. |
 | `shutdown()` | Sets stop event, posts STOP to inbox |
 
+**Adaptation boundary, cadence & budgets** (all opt-in — see §3.9):
+
+- Declare `Tunable(default, low, high)` class attributes; ADR bounds every agent `update_param` against them.
+- Set `decide_when = "idle" | "new_result"` (class attr) to consult the policy only on cycles that carry new evidence.
+- Pass `Operator(..., budget=[Budget("trials", 12)])` for a hard stop that goal state can never block.
+- Read evidence with `self.trend(metric, direction)`, `self.stalled(metric, direction, n)`, `self.tunables`, `self.rejections`.
+
 ---
 
 ### 3.2 Decorators
@@ -288,9 +295,15 @@ def extract(self, snapshot) -> dict:
     return {..., "stagnating": stale}
 ```
 
-**Safety valve** — `max_cycles` on `Operator.__init__` forces stop after N cycles:
+**Result & rejection views** — `snapshot.results` returns this cycle's task-result payloads
+(`result.{uid}`, in completion-drain order — not a semantic "latest"); `snapshot.rejections` returns
+this cycle's boundary rejections (`rejected_param.{name}`). Both are read-only conveniences over
+`observations`. See §3.9.
+
+**Stop conditions** — three, all on `Operator.__init__` and all independent of goal state:
 ```python
-op = SearchOperator(engine, max_cycles=500)
+op = SearchOperator(engine, max_cycles=500, max_runtime=3600,
+                    budget=[Budget("trials", 12)])   # cycles · wall-clock · resource/deadline
 ```
 
 ---
@@ -310,6 +323,65 @@ All inter-component communication enters through `inbox: asyncio.Queue`.
 **Async tasks:** `future.add_done_callback(_deliver_task_event)` — synchronous, zero watcher coroutines, O(1) registration.
 
 **Local acts:** result delivered via `inbox.put_nowait(TASK_EVENT{DONE, result})` — same 1-cycle latency as async tasks, same visibility in next cycle's `@observe`.
+
+---
+
+### 3.9 Adaptation Boundary, Budgets & Evidence Helpers
+
+All additive and opt-in — an operator that declares none of these behaves exactly as before. The
+value types live in `radical.adr.boundary` (`Tunable`, `Budget`), exported from the package root.
+
+**`Tunable(default, low, high, *, int=False, step=None)`** — a bounded parameter the agent may adapt.
+Declared as a class attribute:
+
+```python
+class Run(Operator):
+    learning_rate = Tunable(3e-4, 1e-5, 1e-3)
+    grad_steps    = Tunable(25_000, 2_000, 100_000, int=True)
+    discount      = 0.99          # plain attr → frozen; the agent cannot write it
+```
+
+One declaration is the single source of truth. `__init_subclass__` collects Tunables into
+`_adl_tunables` and adds their names to the objective proxy; ADR seeds `state.objectives` with the
+scalar `default`. At the `UPDATE_PARAM` apply seam **only**, every agent write is **validated** against
+the bounds. An out-of-bounds / non-`int` / off-`step` value — or a write to a non-`Tunable` key once
+any boundary is declared — is **rejected, never silently clamped or dropped**: the requested value is
+never altered, and the refusal is recorded as evidence (`observations["rejected_param.{name}"]`,
+surfaced via `self.rejections` / `Snapshot.rejections`) so the agent re-decides next cycle. Rejection
+is soft — it never raises or aborts the cycle (unlike `_validate_actions`). Operator-internal writes
+(`self.lr = v`, `@observe` folds, construction config) bypass the boundary; only agent `UPDATE_PARAM`
+is gated. `self.tunables` returns `{name: value}`, and `get_schema(...)` renders the bounds into the
+`update_param` tool description so the agent sees the same boundary that validates it.
+
+**`Budget(metric, limit, direction="max")`** — a resource/deadline stop, passed as
+`Operator(..., budget=[Budget("trials", 12)])`. Checked in the run loop beside `max_runtime`
+(`_check_budgets`), reading the metric from `obs` then `snapshot.objectives`; on breach it sets the
+stop event. It is **not** a `Goal` and is evaluated **outside** `_check_goals`, so no goal composition
+— including an unsatisfiable runtime goal an agent adds — can block termination. A `Budget` guarantees
+the run *stops* when the resource is exhausted; it does not change what "converged" means.
+
+**`decide_when`** (class attribute; `None` = every cycle) — a cadence gate applied between OBSERVE and
+DECIDE (`_should_decide`). `"idle"` consults the policy only when `inflight == 0` (captures bootstrap
+and post-result, skips mid-task cycles); `"new_result"` only when `snapshot.results` is non-empty. On
+a skipped cycle ADR applies an empty `Decision()`, but `@observe`, goal checks, and budgets still run.
+It gates *when the implicit loop consults the policy* — it is not a second loop (no `@loop`).
+
+**Evidence helpers** (read-only):
+
+| Helper | Returns | Notes |
+|--------|---------|-------|
+| `Snapshot.results` | `list` | Task-result payloads recorded this cycle (completion-drain order; no "latest" guarantee). |
+| `Snapshot.rejections` | `list` | Boundary rejections surfaced this cycle. |
+| `self.trend(metric, direction, *, eps=1e-9)` | `"improving"/"flat"/"regressing"` | `direction` (`"maximize"`/`"minimize"`) is **required** — numeric change ≠ scientific improvement, and it is not inferred from goals (auxiliary metrics need not have one). Compares the two most recent **distinct** values (consecutive duplicates collapsed, since a trial spans many idle cycles). |
+| `self.stalled(metric, direction, n, *, eps=1e-9)` | `bool` | No improvement across the last `n` distinct values. |
+| `self.tunables` | `dict` | Current `{name: value}` of the declared boundary. |
+| `self.rejections` | `list` | Rejections pending until the next decision consumes them. |
+
+**Static-goal shadow guard** — a runtime goal proposed via `Decision(goals=[...])` whose `name` or
+`metric` collides with a static `@goals` goal is rejected (dropped + logged). The agent may add
+stricter goals on *other* metrics but can never shadow or relax the authoritative objective. This is
+collision prevention, not goal provenance — there is no `Goal(source=…)` field or subtype; the
+authoritative-vs-agent distinction stays *derived* from `@goals` vs `runtime_goals`.
 
 ---
 
@@ -582,3 +654,22 @@ Requires `feature/enable_block_cancellation` in AsyncFlow:
 **Child operators are first-class.** A parent declares children with `add_child(name, OperatorCls, policy=…, **config)`, launches them with the `SPAWN_OPERATOR` action (`acts.spawn_operator(name, …, depends_on=[child_names])`), and observes them through `self.child(name)` → a read-only `ChildHandle` (`.status`/`.started`/`.done`/`.failed` and metric-by-name). `Future`, `UID`, `artifacts`, and `child:*` string keys are internal — they never appear in policy or operator code. Names, count, config, and dependencies are all runtime values, so adaptive fan-out needs no escape hatch. (`policy=` may be a `Policy` instance or a class/factory called with the child.)
 
 **Child lifecycle is runtime-owned, declarative.** `spawn_operator` is idempotent ("ensure launched"): a re-emit on an already-started child (`name in _child_starts`, incl. terminal states) is a no-op + a logged warning — there is no user-managed spawn-once flag. `restart_operator(name)` re-runs a child from its **initial** config (`_child_config`); `cancel_operator(name)` cancels its block Future, leaving a `CANCELED` tombstone. All three are *steering* verbs — they delegate gating to `child.start(*futs)` / `future.cancel()` and never schedule, resolve dependencies, or block.
+
+**The adaptation boundary rejects, it never silently clamps.** With `Tunable`s declared, an
+out-of-bounds agent `update_param` (or a write to a non-`Tunable` key) is refused and surfaced as
+evidence (`rejected_param.*`) — the requested value is never altered and the cycle never aborts. The
+agent runs the experiment it asked for, or learns why it could not.
+
+**Budgets stop independently of goals.** `Budget` is a stop condition, not a `Goal`; it is checked
+outside `_check_goals`, so no goal composition can keep a run alive past its resource/deadline cap. It
+guarantees termination — it does not change runtime-goal composition semantics.
+
+**Cadence gates consultation, not the loop.** `decide_when` only changes *when the policy is
+consulted*; ADR still owns the single implicit loop, and `@observe`/goals/budgets run every cycle.
+
+**Trend is direction-aware.** `trend`/`stalled` require an explicit `direction` and operate on the
+*distinct* value series (idle-cycle repeats collapsed); ADR never guesses whether up or down is
+"better", and never infers it from a goal.
+
+**Runtime goals cannot shadow static ones.** A proposed runtime goal colliding with a static `@goals`
+goal by `name` or `metric` is rejected, keeping the authoritative objective outside the agent's reach.

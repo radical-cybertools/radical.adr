@@ -60,6 +60,11 @@ AND — `AllGoal` only differs by being composable inside an `AnyGoal`.
 Both are evaluated together every cycle; the operator stops when **all** are satisfied. See
 [Goals & convergence](/guides/goals-and-convergence).
 
+A runtime goal whose `name` or `metric` collides with a **static** goal is **rejected** (dropped +
+logged) — a policy can add stricter goals on *other* metrics but can never shadow or relax the
+authoritative objective. A hard resource/compute cap is not a goal at all — use
+[`Budget`](/reference/api-boundary).
+
 ## See also
 
 - [api-decision](/reference/api-decision) — `Decision.goals` / `remove_goals` ·

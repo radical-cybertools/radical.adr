@@ -77,6 +77,7 @@
               "reference/api-policy",
               "reference/api-decision",
               "reference/api-goals",
+              "reference/api-boundary",
               "reference/api-state",
               "reference/errors"
             ]

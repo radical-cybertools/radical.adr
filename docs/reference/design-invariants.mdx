@@ -71,6 +71,27 @@ to `child.start(*futures)` and `future.cancel()`. See
   **initial** config; `cancel_operator(name)` leaves a `CANCELED` tombstone. All three are steering
   verbs.
 
+## Adaptation boundary & budgets
+
+- **The boundary rejects; it never silently clamps.** With `Tunable`s declared, an out-of-bounds agent
+  `update_param` (or a write to a non-`Tunable` key) is refused and surfaced as evidence
+  (`snapshot.rejections`) — the requested value is never altered and the cycle never aborts. The agent
+  runs the experiment it asked for, or learns why it could not. Operator-internal writes bypass the
+  boundary; only agent `UPDATE_PARAM` is gated. See [api-boundary](/reference/api-boundary).
+- **Budgets stop independently of goals.** `Budget` is a stop condition, not a `Goal`; it is evaluated
+  outside goal checking, so no goal composition can keep a run alive past its resource/deadline cap. It
+  guarantees termination — it does not change what "converged" means. Never express a resource cap as a
+  goal (an unsatisfiable agent-added goal would block it).
+- **Cadence gates consultation, not the loop.** `decide_when` only changes *when the policy is
+  consulted*; ADR still owns the single implicit loop, and `@observe`, goals, and budgets run every
+  cycle. It is not a second loop construct.
+- **Trend is direction-aware.** `trend`/`stalled` require an explicit `direction` and operate on the
+  *distinct* value series (idle-cycle repeats collapsed). ADR never guesses whether up or down is
+  "better", and never infers it from a goal.
+- **Runtime goals cannot shadow static ones.** A proposed runtime goal colliding with a static
+  `@goals` goal by `name` or `metric` is rejected, keeping the authoritative objective outside the
+  agent's reach. This is collision prevention, not a goal taxonomy — there is no `Goal(source=…)`.
+
 ## See also
 
 - [SYSTEM.md](https://github.com/radical-cybertools/radical.adr/blob/main/SYSTEM.md) — the internal
