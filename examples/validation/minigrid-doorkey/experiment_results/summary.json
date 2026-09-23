@@ -1,0 +1,44 @@
+{
+  "random": {
+    "seeds": 10,
+    "solve_rate": 0.0,
+    "steps_to_R_high": {
+      "mean": NaN,
+      "ci": [
+        NaN,
+        NaN
+      ],
+      "n_solved": 0
+    },
+    "best_return": {
+      "mean": 0.0,
+      "ci": [
+        0.0,
+        0.0
+      ]
+    },
+    "steps_to_R_low": NaN,
+    "steps_to_R_med": NaN
+  },
+  "hyperband": {
+    "seeds": 5,
+    "solve_rate": 0.0,
+    "steps_to_R_high": {
+      "mean": NaN,
+      "ci": [
+        NaN,
+        NaN
+      ],
+      "n_solved": 0
+    },
+    "best_return": {
+      "mean": 0.0,
+      "ci": [
+        0.0,
+        0.0
+      ]
+    },
+    "steps_to_R_low": NaN,
+    "steps_to_R_med": NaN
+  }
+}

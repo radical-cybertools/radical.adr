@@ -1,0 +1,7 @@
+# MiniGrid-DoorKey AutoRL study (ADR vs Random/Hyperband/PBT; ADR-rule vs ADR-LLM)
+minigrid>=3.0
+gymnasium
+torch
+numpy
+matplotlib
+# LLM arm only (optional): instructor, openai, pydantic

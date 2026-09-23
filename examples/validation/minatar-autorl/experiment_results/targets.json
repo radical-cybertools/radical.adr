@@ -1,0 +1,11 @@
+{
+  "R_low": 1.4,
+  "R_medium": 2.7,
+  "R_high": 3.8,
+  "solve_threshold": 3.8,
+  "total_env_step_budget": 120000,
+  "step_chunk": 15000,
+  "eval_episodes": 10,
+  "frozen": true,
+  "notes": "MinAtar/breakout DQN RR=1. best_all=5.4. R_high=0.7*best."
+}

@@ -1,0 +1,107 @@
+{
+  "random": {
+    "seeds": 5,
+    "solve_rate": 1.0,
+    "steps_to_R_high": {
+      "mean": 30000.0,
+      "ci": [
+        21000.0,
+        39000.0
+      ],
+      "n_solved": 5
+    },
+    "best_return": {
+      "mean": 7.42,
+      "ci": [
+        6.6,
+        8.719999999999999
+      ]
+    },
+    "steps_to_R_low": 15000.0,
+    "steps_to_R_med": 15000.0
+  },
+  "hyperband": {
+    "seeds": 5,
+    "solve_rate": 0.6,
+    "steps_to_R_high": {
+      "mean": 25000.0,
+      "ci": [
+        15000.0,
+        30000.0
+      ],
+      "n_solved": 3
+    },
+    "best_return": {
+      "mean": 4.24,
+      "ci": [
+        3.7600000000000002,
+        4.859999999999999
+      ]
+    },
+    "steps_to_R_low": 15000.0,
+    "steps_to_R_med": 15000.0
+  },
+  "pbt": {
+    "seeds": 5,
+    "solve_rate": 1.0,
+    "steps_to_R_high": {
+      "mean": 48000.0,
+      "ci": [
+        24000.0,
+        75000.0
+      ],
+      "n_solved": 5
+    },
+    "best_return": {
+      "mean": 6.1,
+      "ci": [
+        5.399,
+        6.9
+      ]
+    },
+    "steps_to_R_low": 15000.0,
+    "steps_to_R_med": 15000.0
+  },
+  "adr_rule": {
+    "seeds": 5,
+    "solve_rate": 1.0,
+    "steps_to_R_high": {
+      "mean": 27000.0,
+      "ci": [
+        21000.0,
+        30000.0
+      ],
+      "n_solved": 5
+    },
+    "best_return": {
+      "mean": 5.0200000000000005,
+      "ci": [
+        4.1995,
+        6.119999999999999
+      ]
+    },
+    "steps_to_R_low": 15000.0,
+    "steps_to_R_med": 21000.0
+  },
+  "adr_llm": {
+    "seeds": 5,
+    "solve_rate": 1.0,
+    "steps_to_R_high": {
+      "mean": 51000.0,
+      "ci": [
+        24000.0,
+        87000.0
+      ],
+      "n_solved": 5
+    },
+    "best_return": {
+      "mean": 4.8,
+      "ci": [
+        4.06,
+        5.9399999999999995
+      ]
+    },
+    "steps_to_R_low": 15000.0,
+    "steps_to_R_med": 27000.0
+  }
+}

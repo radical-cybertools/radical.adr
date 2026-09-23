@@ -1,0 +1,28 @@
+{
+  "_comment": "IMMUTABLE facts extracted from the AutoRL literature. NEVER mix with experiment_results/. Defines the domain-standard conventions this study follows and the baselines it benchmarks ADR against.",
+  "primary_benchmark": {
+    "name": "ARLBench",
+    "citation": "Becktepe, Dierkes, et al. (2024, updated 2026). ARLBench: Flexible and Efficient Benchmarking for Hyperparameter Optimization in Reinforcement Learning. arXiv:2409.18827",
+    "code": "https://github.com/automl/arlbench",
+    "algorithms": ["PPO", "DQN", "SAC"],
+    "environment_tiers": ["classic control (Gymnax; CartPole is the quickstart)", "Box2D", "Brax/MuJoCo continuous control", "MinAtar"],
+    "hpo_baselines_compared": ["Random Search", "Hyperband", "PBT (Population-Based Training)", "SMAC"]
+  },
+  "baselines_used_in_this_study": {
+    "random_search": "static; sample configs from the search space, run to completion, pick best.",
+    "hyperband": "static + early stopping; successive halving allocates more budget to survivors (multi-fidelity).",
+    "pbt": "adaptive; a population trains in parallel, poor performers copy weights from good ones (exploit) and perturb hyperparameters (explore). Jaderberg et al. 2017; on-the-fly PBT: arXiv:2106.15883."
+  },
+  "llm_as_optimizer_reference": {
+    "citation": "Liu et al. (2024). AgentHPO: Large Language Model Agent for Hyper-Parameter Optimization. arXiv:2402.01881",
+    "finding": "LLM agents can reduce the number of trials vs traditional AutoML, especially under limited compute budgets; they do NOT consistently outperform classical HPO in all settings.",
+    "role_in_study": "motivates the ADR-LLM arm; we TEST rather than assume the benefit."
+  },
+  "other_references": {
+    "autorl_survey": "Parker-Holder et al. (2022). Automated Reinforcement Learning (AutoRL): A Survey and Open Problems. arXiv:2201.05000",
+    "open_rl_benchmark": "Huang et al. (2024). Open RL Benchmark. arXiv:2402.03046",
+    "duan_continuous_control": "Duan et al. (2016). Benchmarking Deep RL for Continuous Control. arXiv:1604.06778 (kept only as a continuous-control reference)",
+    "offline_standard": "D4RL/Minari (used by the antmaze example)"
+  },
+  "positioning": "ADR is not a new RL algorithm; it is an autonomous tuning/steering layer. The domain-standard way to validate such a method is ARLBench conventions: PPO on a representative env, compared against Random Search / Hyperband / PBT. This study does exactly that on CartPole (the ARLBench quickstart env), designed to extend to Brax/MinAtar tiers later."
+}

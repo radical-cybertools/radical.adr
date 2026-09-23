@@ -1,0 +1,12 @@
+{
+  "env_id": "MiniGrid-DoorKey-6x6-v0",
+  "R_low": 0.241,
+  "R_medium": 0.483,
+  "R_high": 0.676,
+  "solve_threshold": 0.676,
+  "total_env_step_budget": 327680,
+  "step_chunk": 4000,
+  "eval_episodes": 10,
+  "frozen": true,
+  "notes": "MiniGrid/MiniGrid-DoorKey-6x6-v0 PPO. Frozen from reference (seed=0). best_final=0.965; median steps-to-solve(>=0.5)=65536. R_high=0.7*best_final; budget=5*median-solve."
+}

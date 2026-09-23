@@ -1,0 +1,107 @@
+{
+  "random": {
+    "seeds": 10,
+    "solve_rate": 0.6,
+    "steps_to_R_high": {
+      "mean": 39105.333333333336,
+      "ci": [
+        20996.166666666668,
+        57691.0916666666
+      ],
+      "n_solved": 6
+    },
+    "best_return": {
+      "mean": 462.35,
+      "ci": [
+        430.07000000000005,
+        490.6142499999999
+      ]
+    },
+    "steps_to_R_low": 7142.2,
+    "steps_to_R_med": 25646.4
+  },
+  "hyperband": {
+    "seeds": 10,
+    "solve_rate": 1.0,
+    "steps_to_R_high": {
+      "mean": 61733.8,
+      "ci": [
+        58637.354999999996,
+        63604.045
+      ],
+      "n_solved": 10
+    },
+    "best_return": {
+      "mean": 500.0,
+      "ci": [
+        500.0,
+        500.0
+      ]
+    },
+    "steps_to_R_low": 4507.5,
+    "steps_to_R_med": 45719.6
+  },
+  "pbt": {
+    "seeds": 10,
+    "solve_rate": 0.8,
+    "steps_to_R_high": {
+      "mean": 43653.125,
+      "ci": [
+        32102.74375,
+        56135.65312499999
+      ],
+      "n_solved": 8
+    },
+    "best_return": {
+      "mean": 468.86,
+      "ci": [
+        422.3,
+        500.0
+      ]
+    },
+    "steps_to_R_low": 4507.5,
+    "steps_to_R_med": 31639.333333333332
+  },
+  "adr_rule": {
+    "seeds": 10,
+    "solve_rate": 1.0,
+    "steps_to_R_high": {
+      "mean": 17384.8,
+      "ci": [
+        13051.0,
+        22794.695
+      ],
+      "n_solved": 10
+    },
+    "best_return": {
+      "mean": 494.5000000000001,
+      "ci": [
+        489.6465,
+        498.31000000000006
+      ]
+    },
+    "steps_to_R_low": 3453.6,
+    "steps_to_R_med": 11959.6
+  },
+  "adr_llm": {
+    "seeds": 10,
+    "solve_rate": 0.9,
+    "steps_to_R_high": {
+      "mean": 22738.0,
+      "ci": [
+        14779.333333333332,
+        32067.29444444443
+      ],
+      "n_solved": 9
+    },
+    "best_return": {
+      "mean": 491.2900000000001,
+      "ci": [
+        481.52874999999995,
+        498.23999999999995
+      ]
+    },
+    "steps_to_R_low": 3453.6,
+    "steps_to_R_med": 13063.4
+  }
+}

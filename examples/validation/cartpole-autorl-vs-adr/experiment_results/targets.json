@@ -1,0 +1,11 @@
+{
+  "R_low": 100.0,
+  "R_medium": 300.0,
+  "R_high": 475.0,
+  "solve_threshold": 475.0,
+  "total_env_step_budget": 76800,
+  "step_chunk": 2000,
+  "eval_episodes": 10,
+  "frozen": true,
+  "notes": "Frozen from reference phase (seed=0). best_final=500; median training steps to solve = 15360. total budget = 8 * median-solve."
+}
