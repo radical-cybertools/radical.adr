@@ -94,10 +94,39 @@ async def run(self, obs):
 ADR never drops spawns on its own — throttling is always the policy's choice, so dynamicity is
 preserved. You can also target `inflight` with a `Goal` (e.g. stop draining once it hits 0).
 
+## A hard cap that can't be blocked: `Budget`
+
+A `Goal` throttles or signals convergence — but a **compute/resource ceiling that must stop the run no
+matter what** is a different thing, and it should not be a goal. ADR AND-combines the static goal with
+any runtime goals, so a budget expressed as a goal can be blocked forever by an unsatisfiable
+(possibly agent-added) goal and never fire. Use `Budget`:
+
+```python
+from radical.adr import Budget
+
+op = SearchOperator(
+    engine,
+    budget=[Budget("trials", 50), Budget("usd_cost", 20.0)],   # hard stops
+)
+```
+
+A `Budget(metric, limit, direction="max")` is checked every cycle **outside** goal checking (reading
+the metric from `obs`, then `snapshot.objectives`), so no goal composition can keep the run alive past
+its cap. `"max"` stops when `value >= limit`; `"min"` when `value <= limit`.
+
+<Note>
+**Goal vs Budget.** A `Goal` is part of *what convergence means* — a run stops when all goals are
+satisfied, and a policy can throttle on the same metric mid-flight. A `Budget` is *when to give up
+regardless* — an independent termination guarantee that goal state cannot block. Use a `Goal` to
+express "healthy enough to keep going"; use a `Budget` for the hard trial/token/dollar/second ceiling.
+See [api-boundary](/reference/api-boundary).
+</Note>
+
 ## Beyond CPU
 
-The same pattern tracks GPU utilization, memory pressure, queue depth, or a compute-hour budget —
-anything you can read and put into `obs`. See the three-goal "hits AND budget AND cpu" pattern in
+The same `@observe` pattern tracks GPU utilization, memory pressure, or queue depth as `Goal` metrics,
+and any spend counter (trials, tokens, dollars, seconds) as a `Budget`. See the three-goal "hits AND
+budget AND cpu" pattern in
 [Goals & convergence](/guides/goals-and-convergence#multiple-static-goals-and).
 
 ## Next

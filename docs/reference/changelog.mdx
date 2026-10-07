@@ -16,6 +16,18 @@ verbs, user-facing `enable_logging(...)`, and a 7-item API-hardening pass. Full 
 
 ### Added
 
+- **Adaptation boundary, budgets & evidence helpers (additive / opt-in).**
+  `Tunable(default, low, high, *, int=, step=)` declares a bounded agent-tunable parameter as an
+  operator class attribute — one declaration is the single source of truth for the seeded default,
+  bound **validation** at the `UPDATE_PARAM` seam (out-of-bounds → **rejected and surfaced as
+  evidence**, never silently clamped), `self.tunables`, and the agent tool schema.
+  `Operator(..., budget=[Budget("trials", 12)])` adds a resource/deadline stop evaluated
+  **independently of goal state** (a budget-as-goal can be blocked forever; a `Budget` cannot).
+  `decide_when = "idle" | "new_result"` gates *when* the policy is consulted (no `@loop`).
+  `Snapshot.results`/`.rejections`, `Operator.trend(metric, direction)`/`stalled(...)`, and a
+  static-goal shadow guard (a runtime goal cannot reuse a static goal's name/metric) round it out. See
+  [api-boundary](/reference/api-boundary), [Resource-aware steering](/guides/resource-aware-steering).
+
 - **API hardening (additive / opt-in).** Bounded task tracking (terminal Futures pruned;
   `depends_on` still resolves); `acts.retry_task(uid)` (new `ActionKind.RETRY_TASK`);
   `Operator(..., max_runtime=…)` + read-only `Operator.inflight`; `AnyGoal`/`AllGoal` composites and

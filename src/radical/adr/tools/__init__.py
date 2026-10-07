@@ -169,7 +169,14 @@ class ActionSet:
         op = object.__getattribute__(self, "_operator")
         specs: list[dict] = []
 
+        tunables = getattr(type(op), "_adl_tunables", {})
         for name, desc, params in _BUILTIN_SPECS:
+            # Render the declared adaptation boundary into update_param, so the agent
+            # sees exactly which keys are legal and their bounds — from the same
+            # Tunable declaration that validates its writes (one source of truth).
+            if name == "update_param" and tunables:
+                desc = desc + " Permitted keys and bounds (writes outside these are rejected): " \
+                    + "; ".join(_describe_tunable(k, t) for k, t in tunables.items()) + "."
             specs.append({"name": name, "description": desc, "params": params})
 
         for name, fn in type(op)._adl_act_registry.items():  # type: ignore[attr-defined]
@@ -195,6 +202,16 @@ class ActionSet:
 
 
 # ── Schema helpers ─────────────────────────────────────────────────────────────
+
+def _describe_tunable(key: str, t: Any) -> str:
+    """One-line boundary description for a Tunable, e.g. 'learning_rate in [1e-05, 0.001]'."""
+    s = f"{key} in [{t.low}, {t.high}]"
+    if getattr(t, "is_int", False):
+        s += " (integer)"
+    if getattr(t, "step", None):
+        s += f" step {t.step}"
+    return s
+
 
 _BUILTIN_SPECS = [
     ("spawn_task",     "Spawn a registered AsyncFlow task by name with given kwargs. "
