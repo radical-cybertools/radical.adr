@@ -18,10 +18,15 @@ coroutines.
 | `objectives` | persists | annotated attrs, policy params, mirrored child state |
 | `artifacts` | persists | stable ids, file paths |
 | `directives` | cleared each cycle | instructions from a parent |
-| `task_context` | persists | `uid → {name, kwargs}` |
+| `task_context` | persists | `uid → {name, kwargs, action_id}` |
 | `cycle` | — | current cycle index |
 
 **Task error shape** — `observations["error.{uid}"]` is `{"task_name": str, "message": str, "type": str}`.
+
+`task_context[uid]["action_id"]` identifies the emitted action that launched the
+task or child operator. Retries point to the new retry action, whose `target_uid`
+identifies the previous task. Context survives task completion and checkpointing;
+older checkpoints may omit `action_id`, so readers should use `.get("action_id")`.
 
 ### Read-only views
 

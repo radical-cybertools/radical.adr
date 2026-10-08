@@ -40,6 +40,7 @@ import logging
 import time
 import warnings
 from typing import TYPE_CHECKING, Any, AsyncIterator, Callable
+from uuid import uuid4
 
 from radical.adr.boundary import Budget, Tunable
 from radical.adr.decision import Action, ActionKind, Decision
@@ -848,6 +849,15 @@ class Operator:
                 self._check_goals(obs, snapshot, decision)
                 self._apply_goal_changes(decision)
 
+                # Identify occurrences, even when a policy reuses an Action or
+                # Decision. Assign on copies before observers see the decision.
+                decision = decision.model_copy(update={
+                    "actions": [
+                        action.model_copy(update={"action_id": uuid4().hex})
+                        for action in decision.actions
+                    ],
+                })
+
                 log.info("cycle %d: decision — %d actions, %d goal proposals, stop=%s",
                          self.state.cycle, len(decision.actions),
                          len(decision.goals), decision.stop)
@@ -1252,12 +1262,17 @@ class Operator:
                     stacklevel=2,
                 )
 
-    def _track_future(self, result: asyncio.Future, name: str, kwargs: dict) -> None:
+    def _track_future(
+        self, result: asyncio.Future, name: str, kwargs: dict, *,
+        action_id: str | None = None,
+    ) -> None:
         """Register a spawned Future for runtime tracking (shared by tasks and operators)."""
         uid = str(getattr(result, "id", id(result)))
         self.state.task_futures[uid] = result
         self.state.runtime[uid]      = "PENDING"
-        self.state.task_context[uid] = {"name": name, "kwargs": kwargs}
+        self.state.task_context[uid] = {
+            "name": name, "kwargs": kwargs, "action_id": action_id,
+        }
         log.debug("spawned '%s' uid=%s", name, uid)
         result.add_done_callback(
             lambda fut, _uid=uid: _deliver_task_event(fut, _uid, self.inbox)
@@ -1292,14 +1307,18 @@ class Operator:
                 deps.append(fut)
         return deps
 
-    async def _spawn_act_result(self, name: str, kwargs: dict) -> None:
+    async def _spawn_act_result(
+        self, name: str, kwargs: dict, *, action_id: str | None = None,
+    ) -> None:
         """Invoke a registered @act and route its return (shared by spawn/retry)."""
         result = await type(self)._adl_act_registry[name](self, **kwargs)
         if isinstance(result, asyncio.Future):
-            self._track_future(result, name, kwargs)
+            self._track_future(result, name, kwargs, action_id=action_id)
         elif result is not None:
-            uid = f"local.{name}.{id(result)}"
-            self.state.task_context[uid] = {"name": name, "kwargs": kwargs}
+            uid = f"local.{name}.{uuid4().hex}"
+            self.state.task_context[uid] = {
+                "name": name, "kwargs": kwargs, "action_id": action_id,
+            }
             self.inbox.put_nowait(InboxMessage(
                 kind      = MessageKind.TASK_EVENT,
                 sender_id = "adl.local",
@@ -1317,7 +1336,7 @@ class Operator:
             raise ActionError(f"RETRY_TASK '{uid}': '{name}' is not a registered act")
         log.info("operator '%s': retrying task '%s' (was uid=%s)",
                  self.operator_id, name, uid)
-        await self._spawn_act_result(name, ctx.get("kwargs", {}))
+        await self._spawn_act_result(name, ctx.get("kwargs", {}), action_id=act.action_id)
 
     async def _apply_one(self, act: Action) -> None:
         log.debug("cycle %d: apply %s '%s'",
@@ -1334,11 +1353,16 @@ class Operator:
             dep_futures = self._resolve_task_deps(act.depends_on)
             result = await fn(self, *dep_futures, **act.task_kwargs)
             if isinstance(result, asyncio.Future):
-                self._track_future(result, act.task_name, act.task_kwargs)
+                self._track_future(
+                    result, act.task_name, act.task_kwargs, action_id=act.action_id,
+                )
             elif result is not None:
                 # Local result — deliver to inbox so @observe sees it next cycle
-                uid = f"local.{act.task_name}.{id(result)}"
-                self.state.task_context[uid] = {"name": act.task_name, "kwargs": act.task_kwargs}
+                uid = f"local.{act.task_name}.{uuid4().hex}"
+                self.state.task_context[uid] = {
+                    "name": act.task_name, "kwargs": act.task_kwargs,
+                    "action_id": act.action_id,
+                }
                 self.inbox.put_nowait(InboxMessage(
                     kind      = MessageKind.TASK_EVENT,
                     sender_id = "adl.local",
@@ -1348,11 +1372,13 @@ class Operator:
         elif act.kind == ActionKind.SPAWN_OPERATOR:
             result = await self._spawn_operator(act)
             if result is not None:   # None → idempotent no-op (already started)
-                self._track_future(result, act.task_name, act.task_kwargs)
+                self._track_future(
+                    result, act.task_name, act.task_kwargs, action_id=act.action_id,
+                )
 
         elif act.kind == ActionKind.RESTART_OPERATOR:
             result = await self._restart_operator(act)
-            self._track_future(result, act.task_name, {})
+            self._track_future(result, act.task_name, {}, action_id=act.action_id)
 
         elif act.kind == ActionKind.CANCEL_OPERATOR:
             await self._cancel_operator(act)

@@ -39,8 +39,13 @@ class Action(BaseModel):
 
     For ``RESTART_OPERATOR`` / ``CANCEL_OPERATOR``: ``task_name`` is the child name;
     ``operator_cls`` / ``policy`` are unused (the child is already registered).
+
+    ``action_id`` is assigned by ``Operator.run`` to each emitted occurrence,
+    before observer notification. Policy-created actions default to ``None``;
+    re-emitting an action gives it a fresh ID without mutating the original.
     """
 
+    action_id:   str | None       = None
     kind:        ActionKind
     target_uid:  str | None       = None
     task_name:   str | None       = None

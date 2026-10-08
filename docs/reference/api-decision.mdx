@@ -40,10 +40,21 @@ Built via the `ActionSet`, not by hand. Key fields:
 | Field | Meaning |
 |---|---|
 | `kind` | An `ActionKind`. |
+| `action_id` | `str` or `None`. Runtime-assigned ID for this emitted action occurrence. |
 | `task_name` | `@act` name, or child name for operator kinds. |
 | `task_kwargs` | kwargs passed to the act / child config. |
 | `depends_on` | `list[str]` — task **UIDs** (`SPAWN_TASK`) or child **names** (`SPAWN_OPERATOR`/`RESTART_OPERATOR`). |
 | `operator_cls` / `policy` | Live references for `SPAWN_OPERATOR` (not serialized). |
+
+`Operator.run` assigns a fresh `action_id` before `ObserverBase.on_cycle`, copying
+each action so reusing an `Action` or `Decision` never reuses its emitted IDs or
+overwrites the policy's original IDs. Any supplied ID is replaced on the emitted
+copy. Actions built by a policy or returned by offline `replay_trace` have no
+runtime-assigned ID until emitted by an operator.
+
+Every action occurrence gets an ID, including actions that create no task. An ID
+identifies the instruction, not proof of successful execution. For tracked work,
+`snapshot.task_context[uid]["action_id"]` links the task to that instruction.
 
 ## `ActionSet`
 

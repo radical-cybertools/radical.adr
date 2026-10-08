@@ -12,9 +12,14 @@ current unreleased work is summarized below.
 
 Six validated gaps from downstream (Campaign Manager) integration feedback, plus first-class child
 operators (`SPAWN_OPERATOR` / `add_child` / `ChildHandle`) with declarative, runtime-owned lifecycle
-verbs, user-facing `enable_logging(...)`, and a 7-item API-hardening pass. Full suite: 120 passing.
+verbs, user-facing `enable_logging(...)`, and a 7-item API-hardening pass. Full suite: 152 passing.
 
 ### Added
+
+- **Action-to-task links.** Each emitted action receives an `action_id` before
+  recording, retained in task context across completion, retries, and checkpoints.
+  Repeated local results also receive distinct task UIDs. See
+  [Record & replay](/guides/record-and-replay#link-results-to-their-originating-actions).
 
 - **Adaptation boundary, budgets & evidence helpers (additive / opt-in).**
   `Tunable(default, low, high, *, int=, step=)` declares a bounded agent-tunable parameter as an

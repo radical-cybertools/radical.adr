@@ -25,6 +25,37 @@ await op.run_to_completion()
 For the trace to be meaningful, the operator should surface a real evolving metric in `@observe`
 (e.g. `best_score`) so the recorded obs carries signal, not just a cycle counter.
 
+## Link results to their originating actions
+
+Each action in a live recorded decision includes a runtime-assigned `action_id`.
+The resulting task's `snapshot.task_context[uid]` carries the same ID, even if its
+result arrives after the policy has changed. Repeated calls with identical
+arguments have distinct action IDs. To trace a retry, follow the new task's
+`action_id` to its recorded retry action, then read that action's `target_uid`.
+
+`RecordingObserver` stores decisions and the `obs` returned by `@observe`; it does
+not automatically store the full snapshot or task context. To retain the task
+links, surface them in `@observe` or save them with a custom observer. For example,
+add these fields to your operator's existing observation dict:
+
+```python
+"task_actions": {
+    uid: context.get("action_id")
+    for uid, context in snapshot.task_context.items()
+},
+"task_results": {
+    key.removeprefix("result."): value
+    for key, value in snapshot.observations.items()
+    if key.startswith("result.")
+},
+```
+
+`on_cycle` runs before the current actions execute, so new task links appear in
+subsequent snapshots. Actions that return `None`, cancel work, update parameters,
+or perform an idempotent no-op still have action IDs but create no new task link.
+The application decides how to associate these runtime records with its own
+strategy choices or other domain decisions.
+
 ## Replay against a different policy — offline
 
 `replay_trace` re-runs a candidate policy against the recorded `obs` sequence, fully offline:
