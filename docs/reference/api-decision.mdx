@@ -40,10 +40,27 @@ Built via the `ActionSet`, not by hand. Key fields:
 | Field | Meaning |
 |---|---|
 | `kind` | An `ActionKind`. |
+| `action_id` | Optional runtime metadata (`str` or `None`). Assigned per emitted occurrence when `track_action_ids=True`; omitted from serialization when `None`. |
 | `task_name` | `@act` name, or child name for operator kinds. |
 | `task_kwargs` | kwargs passed to the act / child config. |
 | `depends_on` | `list[str]` — task **UIDs** (`SPAWN_TASK`) or child **names** (`SPAWN_OPERATOR`/`RESTART_OPERATOR`). |
 | `operator_cls` / `policy` | Live references for `SPAWN_OPERATOR` (not serialized). |
+
+With `Operator(..., track_action_ids=True)`, `run` assigns a fresh `action_id` to
+each occurrence before `ObserverBase.on_cycle`. It copies the decision and actions,
+replacing any supplied ID only on the emitted copy. Reusing an `Action` or
+`Decision` therefore produces new IDs. Actions built by a policy or returned by
+offline replay receive runtime IDs only when emitted with tracking enabled.
+
+When tracking is enabled, every emitted action gets an ID, including those that
+create no task. It identifies the instruction, not acceptance or successful execution.
+For tracked work,
+`snapshot.task_context[uid]["action_id"]` links the task to that instruction; see
+[Task context](/reference/api-state#snapshot) for scope and task UID behavior.
+
+By default, ADR neither assigns IDs nor adds them to task context. Explicitly
+supplied IDs can still be serialized, but ADR does not propagate them unless
+tracking is enabled. Other serialized fields retain their existing defaults.
 
 ## `ActionSet`
 

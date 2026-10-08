@@ -16,6 +16,13 @@ verbs, user-facing `enable_logging(...)`, and a 7-item API-hardening pass. Full 
 
 ### Added
 
+- **Optional action-to-task links.** `track_action_ids=True` assigns each emitted
+  action an `action_id` before recording, retained in task context across
+  completion and checkpoints. Retries link to their own issuing action. Tracking
+  defaults to off; when enabled, local results and Futures without a backend `id`
+  receive fresh task UIDs. Backend-assigned IDs are retained. See
+  [Record & replay](/guides/record-and-replay#link-results-to-their-originating-actions).
+
 - **Adaptation boundary, budgets & evidence helpers (additive / opt-in).**
   `Tunable(default, low, high, *, int=, step=)` declares a bounded agent-tunable parameter as an
   operator class attribute — one declaration is the single source of truth for the seeded default,

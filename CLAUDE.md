@@ -334,7 +334,7 @@ Do not let implementation details leak into ADR.md.
 | `objectives` | annotated operator attrs, `update_param` writes, child runtime/objectives mirror (`child:{id}:runtime:{k}`, `child:{id}:obj:{k}`) | Persists |
 | `artifacts` | output paths / identifiers | Persists |
 | `directives` | parent instructions | Cleared each cycle |
-| `task_context` | `uid → {name, kwargs}` for every spawned task | Persists |
+| `task_context` | `uid → {name, kwargs}`, plus `action_id` with `track_action_ids=True` | Persists |
 
 Not in `Snapshot` (live references on `RuntimeState`):
 - `task_futures: dict[str, asyncio.Future]`

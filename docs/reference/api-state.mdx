@@ -18,10 +18,25 @@ coroutines.
 | `objectives` | persists | annotated attrs, policy params, mirrored child state |
 | `artifacts` | persists | stable ids, file paths |
 | `directives` | cleared each cycle | instructions from a parent |
-| `task_context` | persists | `uid → {name, kwargs}` |
+| `task_context` | persists | `uid → {name, kwargs}`, plus `action_id` when tracking is enabled |
 | `cycle` | — | current cycle index |
 
 **Task error shape** — `observations["error.{uid}"]` is `{"task_name": str, "message": str, "type": str}`.
+
+With `track_action_ids=True`, `task_context[uid]["action_id"]` identifies the
+emitted action that launched the tracked work. Links cover the Future or local
+result returned by an `@act`, and child-operator launches/restarts; they do not
+identify backend subtasks hidden inside an action.
+
+With tracking enabled, local results and Futures without a backend `id` receive
+fresh UUID-based task UIDs. Backend-assigned IDs are retained. With tracking
+disabled, task UID behavior is unchanged.
+
+Retries point to the new retry action, whose `target_uid` identifies the previous
+task. Context survives task completion and checkpointing. Older checkpoints and
+tasks created without tracking omit `action_id`, so readers
+should use `.get("action_id")`. Loading a checkpoint preserves saved links but
+does not enable tracking; pass the constructor option again to track new actions.
 
 ### Read-only views
 

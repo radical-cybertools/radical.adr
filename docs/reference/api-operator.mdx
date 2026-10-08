@@ -19,6 +19,7 @@ Operator(
     max_cycles=None,
     max_runtime=None,
     budget=None,
+    track_action_ids=False,
 )
 ```
 
@@ -36,6 +37,7 @@ objectives (proxied to `state.objectives`).
 | `max_cycles` | `int \| None` | Stop condition — force stop after N cycles. |
 | `max_runtime` | `float \| None` | Stop condition — force stop after N wall-clock seconds. |
 | `budget` | `list[Budget] \| None` | Stop condition(s) on observed metrics, evaluated independently of goal state. See [api-boundary](/reference/api-boundary). |
+| `track_action_ids` | `bool` | Opt in to runtime-generated action IDs and links in task context. Defaults to `False`; applies only to this operator's actions. See [Record & replay](/guides/record-and-replay#link-results-to-their-originating-actions). |
 
 ### Class attributes
 

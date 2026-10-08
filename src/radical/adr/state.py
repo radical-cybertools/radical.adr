@@ -30,7 +30,7 @@ class Snapshot(BaseModel, frozen=True):
     objectives:   dict[str, Any]
     artifacts:    dict[str, Any]
     directives:   dict[str, Any]
-    task_context: dict[str, Any] = {}  # uid → {name: str, kwargs: dict}
+    task_context: dict[str, Any] = {}  # uid → {name, kwargs, optional action_id}
 
     model_config = {"arbitrary_types_allowed": True}
 
@@ -74,7 +74,7 @@ class RuntimeState:
     objectives    — stable goals set externally; persist across cycles
     artifacts     — references to produced outputs (paths, identifiers)
     directives    — incoming instructions from parent/user; consumed each cycle
-    task_context  — uid → {name, kwargs} for every spawned task; persists
+    task_context  — uid → {name, kwargs, optional action_id} for every spawned task; persists
 
     task_futures  — live asyncio.Future references (not serializable)
     history       — bounded ring of previous Snapshots
