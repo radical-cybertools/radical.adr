@@ -40,6 +40,7 @@ import logging
 import time
 import warnings
 from typing import TYPE_CHECKING, Any, AsyncIterator, Callable
+from uuid import uuid4
 
 from radical.adr.boundary import Budget, Tunable
 from radical.adr.decision import Action, ActionKind, Decision
@@ -67,7 +68,7 @@ _RESERVED = frozenset({
     "state", "inbox", "children", "_child_starts", "_child_config",
     "_stop_event", "_adl_actionset", "_policy", "_runtime_goals", "_block_factory",
     "_max_cycles", "_max_runtime", "_started_at", "_goal_streaks", "_budget",
-    "_pending_rejections", "decide_when",
+    "_pending_rejections", "decide_when", "_track_action_ids",
 })
 
 
@@ -339,11 +340,13 @@ class Operator:
         max_cycles:    int | None            = None,
         max_runtime:   float | None          = None,
         budget:        "list[Budget] | None" = None,
+        track_action_ids: bool              = False,
     ) -> None:
         object.__setattr__(self, "operator_id",  operator_id or type(self).__name__)
         object.__setattr__(self, "engine",       engine)
         object.__setattr__(self, "parent",       parent)
         object.__setattr__(self, "observer",     observer)
+        object.__setattr__(self, "_track_action_ids", track_action_ids)
 
         object.__setattr__(self, "state",        RuntimeState(self.operator_id))
         object.__setattr__(self, "inbox",        asyncio.Queue(maxsize=inbox_maxsize))
@@ -848,6 +851,16 @@ class Operator:
                 self._check_goals(obs, snapshot, decision)
                 self._apply_goal_changes(decision)
 
+                if self._track_action_ids:
+                    # Identify occurrences, even when a policy reuses an Action
+                    # or Decision. Assign on copies before observer notification.
+                    decision = decision.model_copy(update={
+                        "actions": [
+                            action.model_copy(update={"action_id": uuid4().hex})
+                            for action in decision.actions
+                        ],
+                    })
+
                 log.info("cycle %d: decision — %d actions, %d goal proposals, stop=%s",
                          self.state.cycle, len(decision.actions),
                          len(decision.goals), decision.stop)
@@ -1252,16 +1265,26 @@ class Operator:
                     stacklevel=2,
                 )
 
-    def _track_future(self, result: asyncio.Future, name: str, kwargs: dict) -> None:
-        """Register a spawned Future for runtime tracking (shared by tasks and operators)."""
-        uid = str(getattr(result, "id", id(result)))
+    def _track_future(
+        self, result: asyncio.Future, name: str, kwargs: dict, *,
+        action_id: str | None = None,
+    ) -> str:
+        """Register a spawned Future and return its task UID (shared by tasks and operators)."""
+        uid = getattr(result, "id", _MISSING)
+        if uid is _MISSING:
+            # Object addresses can be reused after terminal Futures are pruned.
+            uid = uuid4().hex if self._track_action_ids else id(result)
+        uid = str(uid)
         self.state.task_futures[uid] = result
         self.state.runtime[uid]      = "PENDING"
         self.state.task_context[uid] = {"name": name, "kwargs": kwargs}
+        if self._track_action_ids and action_id is not None:
+            self.state.task_context[uid]["action_id"] = action_id
         log.debug("spawned '%s' uid=%s", name, uid)
         result.add_done_callback(
             lambda fut, _uid=uid: _deliver_task_event(fut, _uid, self.inbox)
         )
+        return uid
 
     def _resolve_task_deps(self, uids: list[str]) -> list[asyncio.Future]:
         """Resolve depends_on task UIDs to Futures (live or reconstructed).
@@ -1292,14 +1315,19 @@ class Operator:
                 deps.append(fut)
         return deps
 
-    async def _spawn_act_result(self, name: str, kwargs: dict) -> None:
+    async def _spawn_act_result(
+        self, name: str, kwargs: dict, *, action_id: str | None = None,
+    ) -> None:
         """Invoke a registered @act and route its return (shared by spawn/retry)."""
         result = await type(self)._adl_act_registry[name](self, **kwargs)
         if isinstance(result, asyncio.Future):
-            self._track_future(result, name, kwargs)
+            self._track_future(result, name, kwargs, action_id=action_id)
         elif result is not None:
-            uid = f"local.{name}.{id(result)}"
+            local_id = uuid4().hex if self._track_action_ids else id(result)
+            uid = f"local.{name}.{local_id}"
             self.state.task_context[uid] = {"name": name, "kwargs": kwargs}
+            if self._track_action_ids and action_id is not None:
+                self.state.task_context[uid]["action_id"] = action_id
             self.inbox.put_nowait(InboxMessage(
                 kind      = MessageKind.TASK_EVENT,
                 sender_id = "adl.local",
@@ -1317,7 +1345,7 @@ class Operator:
             raise ActionError(f"RETRY_TASK '{uid}': '{name}' is not a registered act")
         log.info("operator '%s': retrying task '%s' (was uid=%s)",
                  self.operator_id, name, uid)
-        await self._spawn_act_result(name, ctx.get("kwargs", {}))
+        await self._spawn_act_result(name, ctx.get("kwargs", {}), action_id=act.action_id)
 
     async def _apply_one(self, act: Action) -> None:
         log.debug("cycle %d: apply %s '%s'",
@@ -1334,11 +1362,16 @@ class Operator:
             dep_futures = self._resolve_task_deps(act.depends_on)
             result = await fn(self, *dep_futures, **act.task_kwargs)
             if isinstance(result, asyncio.Future):
-                self._track_future(result, act.task_name, act.task_kwargs)
+                self._track_future(
+                    result, act.task_name, act.task_kwargs, action_id=act.action_id,
+                )
             elif result is not None:
                 # Local result — deliver to inbox so @observe sees it next cycle
-                uid = f"local.{act.task_name}.{id(result)}"
+                local_id = uuid4().hex if self._track_action_ids else id(result)
+                uid = f"local.{act.task_name}.{local_id}"
                 self.state.task_context[uid] = {"name": act.task_name, "kwargs": act.task_kwargs}
+                if self._track_action_ids and act.action_id is not None:
+                    self.state.task_context[uid]["action_id"] = act.action_id
                 self.inbox.put_nowait(InboxMessage(
                     kind      = MessageKind.TASK_EVENT,
                     sender_id = "adl.local",
@@ -1348,11 +1381,15 @@ class Operator:
         elif act.kind == ActionKind.SPAWN_OPERATOR:
             result = await self._spawn_operator(act)
             if result is not None:   # None → idempotent no-op (already started)
-                self._track_future(result, act.task_name, act.task_kwargs)
+                self._child_starts[act.task_name] = self._track_future(
+                    result, act.task_name, act.task_kwargs, action_id=act.action_id,
+                )
 
         elif act.kind == ActionKind.RESTART_OPERATOR:
             result = await self._restart_operator(act)
-            self._track_future(result, act.task_name, {})
+            self._child_starts[act.task_name] = self._track_future(
+                result, act.task_name, {}, action_id=act.action_id,
+            )
 
         elif act.kind == ActionKind.CANCEL_OPERATOR:
             await self._cancel_operator(act)
@@ -1446,9 +1483,7 @@ class Operator:
                                    **act.task_kwargs)
 
         log.info("operator '%s': spawning child operator '%s'", self.operator_id, name)
-        fut = child.start(*self._resolve_child_deps(act.depends_on))
-        self._child_starts[name] = str(getattr(fut, "id", id(fut)))
-        return fut
+        return child.start(*self._resolve_child_deps(act.depends_on))
 
     def _resolve_child_deps(self, dep_names: list[str]) -> list[asyncio.Future]:
         """Map upstream child **names** to their live start-Futures (skip unknown)."""
@@ -1503,9 +1538,7 @@ class Operator:
         self._child_starts.pop(name, None)
 
         log.info("operator '%s': restarting child operator '%s'", self.operator_id, name)
-        fut = child.start(*self._resolve_child_deps(act.depends_on))
-        self._child_starts[name] = str(getattr(fut, "id", id(fut)))
-        return fut
+        return child.start(*self._resolve_child_deps(act.depends_on))
 
     async def _cancel_operator(self, act: Action) -> None:
         """Cancel a child's in-flight block Future, leaving a CANCELED tombstone.

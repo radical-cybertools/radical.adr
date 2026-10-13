@@ -5,7 +5,7 @@ from __future__ import annotations
 from enum import Enum
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, SerializerFunctionWrapHandler, model_serializer
 
 from radical.adr.goals import Goal
 
@@ -24,6 +24,11 @@ class ActionKind(str, Enum):
 class Action(BaseModel):
     """A single, serializable workflow action instruction.
 
+    With ``Operator(..., track_action_ids=True)``, ``action_id`` is assigned to
+    each emitted occurrence before observer notification. Re-emitting an action
+    gives it a fresh ID without mutating the original. Unset IDs default to
+    ``None`` and are omitted from serialization.
+
     ``task_name`` is a string key into ``Operator.task_registry`` or
     ``Operator.workflow_registry``.  The callable lookup happens at execution
     time inside the operator — never here.
@@ -41,6 +46,7 @@ class Action(BaseModel):
     ``operator_cls`` / ``policy`` are unused (the child is already registered).
     """
 
+    action_id:   str | None       = None
     kind:        ActionKind
     target_uid:  str | None       = None
     task_name:   str | None       = None
@@ -52,6 +58,13 @@ class Action(BaseModel):
     policy:       Any = Field(default=None, exclude=True)   # Policy instance OR class/factory
 
     model_config = {"arbitrary_types_allowed": True}
+
+    @model_serializer(mode="wrap")
+    def _serialize(self, handler: SerializerFunctionWrapHandler):
+        data = handler(self)
+        if self.action_id is None:
+            data.pop("action_id", None)
+        return data
 
 
 class Decision(BaseModel):

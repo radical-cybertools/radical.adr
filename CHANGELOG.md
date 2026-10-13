@@ -15,9 +15,16 @@ runtime-owned lifecycle verbs (idempotent `spawn_operator`, `restart_operator`,
 (task pruning, `retry_task`, `max_runtime`/`inflight`, `AnyGoal`/`AllGoal`/`for_cycles`, fuller LLM
 schema, hierarchical replay, checkpoint/resume), and a domain-agnostic adaptation-boundary layer
 (`Tunable`, `Budget`, `decide_when`, evidence helpers) distilled from a real offline-RL steering
-use case. Full suite: 144 passing.
+use case.
 
 ### Added
+
+- **Optional action-to-task links.** `Operator(..., track_action_ids=True)` assigns
+  a fresh `Action.action_id` per emitted occurrence before observer notification
+  and retains it in task context for tasks, blocks, retries, and child-operator
+  launches/restarts. Tracking defaults to `False`; unset IDs are omitted from
+  serialization. Checkpoints preserve task links; recording them requires a
+  custom observer or explicit inclusion in `@observe`.
 
 - **Adaptation boundary, budgets & evidence helpers (additive / opt-in; new module
   `radical.adr.boundary`, exported from the package root).** Distilled from a real offline-RL steering
@@ -127,6 +134,11 @@ use case. Full suite: 144 passing.
   `LLMPolicy` helpers.
 
 ### Fixed
+
+- With action tracking enabled, local results and Futures without a backend `id`
+  receive fresh task UIDs, preventing reused Python object addresses from
+  overwriting context. Backend-assigned IDs are retained; task UID behavior with
+  tracking disabled is unchanged.
 
 - A hung primary policy in a `Policy(primary, fallback)` composition previously blocked
   the ODA loop indefinitely — fallback only triggered on raise/`None`, never on a hang.

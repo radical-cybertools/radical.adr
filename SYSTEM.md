@@ -261,9 +261,23 @@ LLM schema: `op.get_actions("openai")` / `"anthropic"` / `"langgraph"` — rende
 | `objectives` | Annotated operator attrs, policy params, child runtime/objectives mirror (`child:{id}:runtime:{k}`, `child:{id}:obj:{k}`) | Persists |
 | `artifacts` | Stable identifiers, file paths | Persists |
 | `directives` | Instructions from parent | Cleared each cycle |
-| `task_context` | `uid → {name, kwargs}` for every spawned task | Persists |
+| `task_context` | `uid → {name, kwargs}`, plus `action_id` with tracking enabled, for every spawned task | Persists |
 
 Live references (not in `Snapshot`): `task_futures: dict[str, Future]`, `history: deque[Snapshot]` (maxlen=64).
+
+**Optional action links** — `Operator(..., track_action_ids=True)` assigns a fresh
+`Action.action_id` to each emitted occurrence before observer notification, using
+copies so policy-owned action IDs are unchanged. Context retains the ID for the
+Future or local result returned by an `@act`, and for child launches/restarts;
+backend subtasks hidden inside an action are outside this scope. A retry's new
+task points to the retry action, whose `target_uid` identifies the preceding task.
+
+With tracking enabled, local results and Futures without a backend `id` receive
+fresh UUID-based task UIDs; backend-assigned IDs are retained. Subsequent snapshots
+expose new context, and checkpoints preserve it. Tracking defaults to `False`,
+retaining legacy task context and UID behavior; unset action IDs are omitted from
+serialization. Each operator opts in independently. Applications own persistence
+and links to domain-specific decisions; observers provide the debugging channel.
 
 **Snapshot** — frozen Pydantic model. Safe to log, serialize, or pass across coroutines.
 

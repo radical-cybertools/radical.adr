@@ -16,7 +16,7 @@ across coroutines.
 | `objectives` | Annotated operator attrs, policy params, mirrored child runtime/objectives | Persists |
 | `artifacts` | Stable identifiers, file paths | Persists |
 | `directives` | Instructions from a parent | **Cleared each cycle** |
-| `task_context` | `uid → {name, kwargs}` for every spawned task | Persists |
+| `task_context` | `uid → {name, kwargs}`, plus `action_id` with tracking enabled, for every spawned task | Persists |
 
 The operator also holds runtime-only handles — the live task Futures it is tracking and a bounded
 history of recent snapshots. These are **not** part of the serializable `Snapshot`.
