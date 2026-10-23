@@ -195,14 +195,14 @@ async def main_rhapsody() -> None:
 
     print("Resource-aware search  |  RHAPSODY backend")
     print(f"  Goals: radius < {MIN_RADIUS}  AND  cpu_percent < {CPU_LIMIT}")
-    print(f"  Telemetry poll: 1.0 s  |  Safety valve: max_cycles=100\n")
+    print("  Telemetry poll: 1.0 s  |  Safety valve: max_cycles=100\n")
 
     snapshot = None
     async for snapshot in op.run():
         pass
 
     best = min(op.history, key=lambda r: r["value"]) if op.history else None
-    print(f"\nStopped autonomously — both goals satisfied")
+    print("\nStopped autonomously — both goals satisfied")
     print(f"Cycles: {snapshot.cycle + 1}  |  Final radius: {op.radius:.6f}")
     if best:
         print(f"Best:   x={best['x']:.6f}  error={abs(best['x'] - TARGET):.6f}")
@@ -220,14 +220,14 @@ async def main_local() -> None:
 
     print("Resource-aware search  |  local backend (simulated CPU)")
     print(f"  Goals: radius < {MIN_RADIUS}  AND  cpu_percent < {CPU_LIMIT}")
-    print(f"  CPU starts at 99%, drops ~6.5% per cycle  |  Safety valve: max_cycles=100\n")
+    print("  CPU starts at 99%, drops ~6.5% per cycle  |  Safety valve: max_cycles=100\n")
 
     snapshot = None
     async for snapshot in op.run():
         pass
 
     best = min(op.history, key=lambda r: r["value"]) if op.history else None
-    print(f"\nStopped autonomously — both goals satisfied")
+    print("\nStopped autonomously — both goals satisfied")
     print(f"Cycles: {snapshot.cycle + 1}  |  Final radius: {op.radius:.6f}")
     if best:
         print(f"Best:   x={best['x']:.6f}  error={abs(best['x'] - TARGET):.6f}")

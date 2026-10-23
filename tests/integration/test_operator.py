@@ -334,7 +334,6 @@ class _ErrOp(Operator):
 
     @act
     async def failing_act(self, x: float) -> dict:
-        from radical.asyncflow import WorkflowEngine
         return self.engine.function_task(_failing_impl)(x=x)
 
     @observe

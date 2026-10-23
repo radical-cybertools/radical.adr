@@ -19,6 +19,12 @@ use case.
 
 ### Added
 
+- **Continuous integration.** A GitHub Actions workflow runs Ruff (rules `E4,E7,E9,F`, now
+  set in `[tool.ruff.lint]` in `pyproject.toml`) and then the test suite on Python 3.10–3.14
+  with the `mcp` extra, on every pull request and on pushes to `main` and `feature/prototype`.
+  The 18 existing findings under those rules (unused imports and f-strings without
+  placeholders, in `examples/`, `tests/` and `policy/base.py`) are fixed.
+
 - **Optional action-to-task links.** `Operator(..., track_action_ids=True)` assigns
   a fresh `Action.action_id` per emitted occurrence before observer notification
   and retains it in task context for tasks, blocks, retries, and child-operator

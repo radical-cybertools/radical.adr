@@ -15,7 +15,6 @@ ChildHandle.done, with no artifact/uid bookkeeping anywhere.
 
 from __future__ import annotations
 
-import pytest
 
 from radical.adr import Decision, Operator, Policy, act, decide, observe
 

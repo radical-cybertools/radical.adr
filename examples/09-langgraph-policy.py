@@ -226,7 +226,7 @@ async def main() -> None:
     # The operator stopped because the Goal converged —
     # not because the LLM returned stop=True.
     best = min(op.history, key=lambda r: r["value"]) if op.history else None
-    print(f"\nStopped by: Goal (autonomous) — not the LLM")
+    print("\nStopped by: Goal (autonomous) — not the LLM")
     print(f"Cycles: {snapshot.cycle + 1}  |  Final radius: {op.radius:.6f}")
     if best:
         print(f"Best:   x={best['x']:.6f}  error={abs(best['x'] - TARGET):.6f}")

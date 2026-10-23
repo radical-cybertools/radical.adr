@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import random
 
-import pytest
 
 from radical.adr import Decision, Operator, Policy, decide, goals, observe, act
 from radical.adr.goals import Goal
