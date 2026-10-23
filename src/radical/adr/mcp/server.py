@@ -21,6 +21,8 @@ from typing import TYPE_CHECKING
 from typing import Any
 
 from radical.adr.decision import Decision
+from radical.adr.errors import ActionError
+from radical.adr.tools import _TYPE_MAP
 
 if TYPE_CHECKING:
     from radical.adr.operator import Operator
@@ -29,14 +31,7 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 # JSON-schema types rendered by ActionSet.get_schema → Python annotations for FastMCP.
-_JSON_TYPES: dict[str, Any] = {
-    "string":  str,
-    "integer": int,
-    "number":  float,
-    "boolean": bool,
-    "object":  dict,
-    "array":   list,
-}
+_JSON_TYPES: dict[str, Any] = {v: k for k, v in _TYPE_MAP.items()}
 
 
 class ADLMCPServer:
@@ -101,6 +96,9 @@ class ADLMCPServer:
                     payload   = {"mutation": mutation},
                 ))
                 return {"status": "queued", "tool": name}
+            except ActionError as exc:
+                log.warning("ADLMCPServer: tool '%s' rejected: %s", name, exc)
+                return {"status": "error", "detail": str(exc)}
             except Exception as exc:
                 log.exception("ADLMCPServer: tool '%s' failed", name)
                 return {"status": "error", "detail": str(exc)}

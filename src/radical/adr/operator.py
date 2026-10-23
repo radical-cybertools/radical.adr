@@ -850,6 +850,7 @@ class Operator:
                 # Externally queued actions (CUSTOM mutations, e.g. from ADLMCPServer)
                 # join this cycle's decision after the policy's own, so they share its
                 # Tunable boundary, action-ID assignment and observer notification.
+                n_policy = len(decision.actions)
                 external = self._take_external_actions()
                 if external:
                     decision = decision.model_copy(
@@ -875,7 +876,8 @@ class Operator:
                 if self.observer is not None:
                     self.observer.on_cycle(snapshot, obs, decision)
 
-                await self._apply_actions(decision.actions)         # 4. ACT
+                await self._apply_actions(decision.actions[:n_policy])   # 4. ACT
+                await self._apply_external_actions(decision.actions[n_policy:])
                 await self._dispatch(decision)
 
                 if decision.stop:
@@ -1129,6 +1131,19 @@ class Operator:
             accepted.append(act)
         pending.clear()
         return accepted
+
+    async def _apply_external_actions(self, actions: list[Action]) -> None:
+        """Apply validated external actions; one that fails is logged, never raised.
+
+        An external client must not be able to end the run (e.g. with an argument
+        the @act cannot handle), so a failure here drops only that action.
+        """
+        for act in actions:
+            try:
+                await self._apply_one(act)
+            except Exception:
+                log.warning("operator '%s': external %s failed", self.operator_id,
+                            act.kind.value, exc_info=True)
 
     # ── Action application ───────────────────────────────────────────────────
 
@@ -1550,6 +1565,7 @@ class Operator:
         for key, value in self._child_config.get(name, {}).items():
             setattr(child, key, value)
         child._stop_event.clear()
+        child._pending_external.clear()
         object.__setattr__(child, "_block_factory", None)
 
     async def _restart_operator(self, act: Action) -> asyncio.Future:

@@ -251,7 +251,9 @@ call back into the `ActionSet`'s `Action` (or `Decision` for `stop`), pre-valida
 `_validate_actions`, and queues it as `CUSTOM`. `_apply_message` buffers it in `_pending_external`;
 `_take_external_actions` re-validates each one alone (drop + `log.warning`, never abort the run) and
 the run loop appends them AFTER the policy's actions, BEFORE `_check_goals`/action-ID
-assignment/`on_cycle` — so the Tunable boundary and action IDs apply unchanged. A `stop` mutation sets
+assignment/`on_cycle` — so the Tunable boundary and action IDs apply unchanged. ACT applies the
+policy's slice via `_apply_actions` (raises), then the external slice via `_apply_external_actions`
+(each failure logged, never raised — an MCP client must not be able to end the run). A `stop` mutation sets
 `_stop_event`. Other `CUSTOM` payloads (`Decision.notify`) are still not read by ADR. The server and
 operator must share one event loop; `serve()` uses FastMCP's `run_*_async` (its `run()` is sync).
 The `mcp` extra is pinned `<2` (mcp 2 removed `mcp.server.fastmcp`).

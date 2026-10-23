@@ -22,6 +22,10 @@ class _SteeredOp(Operator):
     async def evaluate(self, x: float) -> dict:
         return {"x": x}
 
+    @act
+    async def boom(self) -> dict:
+        raise RuntimeError("act failed")
+
     @observe
     def o(self, snap) -> dict:
         return {"results": snap.results, "rejections": snap.rejections}
@@ -102,6 +106,20 @@ async def test_invalid_custom_mutation_is_dropped_without_aborting_run(caplog):
     assert op.state.cycle == 3                                 # run was not aborted
     assert op.lr == pytest.approx(0.5)                         # the valid mutation still applied
     assert "no_such_act" in caplog.text
+
+
+async def test_custom_mutation_failing_at_apply_is_logged_not_raised(caplog):
+    op = _SteeredOp(None, max_cycles=3)
+    op.policy = _Idle()
+    acts = op.get_actions()
+    op.inbox.put_nowait(_mutation(acts.boom()))
+    op.inbox.put_nowait(_mutation(acts.update_param("lr", 0.5)))
+    with caplog.at_level("WARNING", logger="radical.adr.operator"):
+        await op.run_to_completion()
+
+    assert op.state.cycle == 3                                 # run was not aborted
+    assert op.lr == pytest.approx(0.5)                         # later mutation still applied
+    assert "act failed" in caplog.text
 
 
 async def test_custom_stop_mutation_stops_the_run():

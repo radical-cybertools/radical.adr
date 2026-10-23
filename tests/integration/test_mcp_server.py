@@ -100,9 +100,14 @@ async def test_serve_awaits_the_async_transport(monkeypatch):
     async def fake_stdio() -> None:
         ran.append("stdio")
 
+    async def fake_sse() -> None:
+        ran.append("sse")
+
     monkeypatch.setattr(server.mcp, "run_stdio_async", fake_stdio)
+    monkeypatch.setattr(server.mcp, "run_sse_async", fake_sse)
     await server.serve("stdio")
-    assert ran == ["stdio"]
+    await server.serve("sse")
+    assert ran == ["stdio", "sse"]
 
     with pytest.raises(ValueError):
         await server.serve("carrier-pigeon")

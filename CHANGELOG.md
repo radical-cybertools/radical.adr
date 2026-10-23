@@ -142,8 +142,9 @@ use case.
   queued MCP mutations were never applied. A `CUSTOM` payload `{"mutation": Action |
   Decision}` now joins the cycle's decision after the policy's actions, with the same
   `Tunable` boundary, action IDs and observer notification; a `stop` takes the `STOP`
-  path. An invalid external action gets an error reply from the server and is dropped
-  with a warning at apply time, without aborting the run. Other `CUSTOM` payloads (such
+  path. An invalid external action gets an error reply from the server; one that turns
+  invalid, or fails when applied (for example its `@act` raises), is dropped with a
+  warning, without aborting the run. Other `CUSTOM` payloads (such
   as `Decision.notify`) are still not read by ADR. `serve()` awaits FastMCP's async
   stdio/SSE runner instead of the synchronous `run()`, which failed inside a running
   event loop. The `mcp` extra is pinned to `mcp>=1.2,<2` (mcp 2 removed

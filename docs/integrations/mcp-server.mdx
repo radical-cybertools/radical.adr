@@ -60,8 +60,9 @@ same path as every other action:
 
 - **Validation** — an action that is invalid when the tool is called (an unknown task, a missing
   parameter, an unknown uid) is refused with `{"status": "error", "detail": ...}` and never queued.
-  It is checked again when applied; if the state changed meanwhile, it is logged and dropped without
-  aborting the run.
+  It is checked again when applied; if the state changed meanwhile, it is logged and dropped. If
+  applying it fails (for example the `@act` raises on an argument it cannot handle), the failure is
+  logged and only that action is dropped. An external client cannot end the run this way.
 - **Adaptation boundary** — `update_param` is gated by the operator's `Tunable` declarations; an
   out-of-bounds write is rejected and surfaced as evidence, as for a policy's write.
 - **Action IDs and observers** — with `track_action_ids=True` the action gets an `action_id`, and

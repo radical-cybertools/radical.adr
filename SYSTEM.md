@@ -338,7 +338,7 @@ All inter-component communication enters through `inbox: asyncio.Queue`.
 
 **Local acts:** result delivered via `inbox.put_nowait(TASK_EVENT{DONE, result})` — same 1-cycle latency as async tasks, same visibility in next cycle's `@observe`.
 
-**External steering:** a `CUSTOM` message whose payload is `{"mutation": Action | Decision}` (what `ADLMCPServer` sends) is buffered at drain time. Its actions are validated one by one (an invalid one is logged and dropped, never aborting the run) and appended after the policy's actions in that cycle's `Decision`, so they pass the same `Tunable` boundary, action-ID assignment and `on_cycle` notification. They apply on cadence-skipped cycles too. A mutation with `stop=True` sets the stop event, like `STOP`. Any other `CUSTOM` payload is not read by ADR.
+**External steering:** a `CUSTOM` message whose payload is `{"mutation": Action | Decision}` (what `ADLMCPServer` sends) is buffered at drain time. Its actions are validated one by one (an invalid one is logged and dropped, never aborting the run) and appended after the policy's actions in that cycle's `Decision`, so they pass the same `Tunable` boundary, action-ID assignment and `on_cycle` notification. They are applied after the policy's batch, one by one; one that fails (e.g. its `@act` raises) is logged and dropped, never raised. They apply on cadence-skipped cycles too. A mutation with `stop=True` sets the stop event, like `STOP`. Any other `CUSTOM` payload is not read by ADR.
 
 ---
 
