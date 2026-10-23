@@ -135,6 +135,16 @@ use case.
 
 ### Fixed
 
+- **`@act` tool schemas match the method signatures.** `ActionSet.get_schema("openai")` and
+  `get_schema("anthropic")` marked every `@act` parameter required, including ones with defaults.
+  They rendered `*dep_futures` and `**kwargs` as ordinary parameters, so an `@act` taking
+  upstream futures could not be called from a tool call: its `dep_futures` argument was rejected
+  as an unknown kwarg. They also left string annotations (`from __future__ import annotations`)
+  untyped. Defaulted parameters are now optional, variadic parameters are not rendered, and
+  string annotations are resolved with `typing.get_type_hints`; an unresolvable one still
+  renders untyped. The `langgraph` format builds tools from the `ActionSet` callables and is
+  unchanged.
+
 - With action tracking enabled, local results and Futures without a backend `id`
   receive fresh task UIDs, preventing reused Python object addresses from
   overwriting context. Backend-assigned IDs are retained; task UID behavior with

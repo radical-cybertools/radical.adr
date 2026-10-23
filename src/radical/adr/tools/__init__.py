@@ -7,6 +7,7 @@ Any reasoning backend (RulePolicy, LLMPolicy, LangGraph) can use the same action
 from __future__ import annotations
 
 import inspect
+import typing
 from typing import TYPE_CHECKING, Any, Callable
 
 from radical.adr.decision import Action, ActionKind, Decision
@@ -182,13 +183,25 @@ class ActionSet:
         for name, fn in type(op)._adl_act_registry.items():  # type: ignore[attr-defined]
             try:
                 sig = inspect.signature(fn)
-                params = [
-                    (pname, p.annotation)
-                    for pname, p in sig.parameters.items()
-                    if pname != "self"
-                ]
             except (ValueError, TypeError):
-                params = []
+                sig = None
+            # Resolve string annotations (e.g. `from __future__ import annotations`);
+            # if any cannot be resolved, fall back to the raw annotations (untyped).
+            try:
+                hints = typing.get_type_hints(fn)
+            except Exception:
+                hints = {}
+            params: list[tuple] = []
+            optional: set[str] = set()
+            for pname, p in (sig.parameters.items() if sig else ()):
+                # *dep_futures receive depends_on futures and **kwargs has no names,
+                # so neither is a parameter an agent can fill.
+                if pname == "self" or p.kind in (p.VAR_POSITIONAL, p.VAR_KEYWORD):
+                    continue
+                ann = p.annotation
+                params.append((pname, hints.get(pname, ann) if isinstance(ann, str) else ann))
+                if p.default is not inspect.Parameter.empty:
+                    optional.add(pname)
             # depends_on (optional) lets an LLM express task DAG dependencies —
             # upstream task UIDs that must be DONE before this @act runs.
             params.append(("depends_on", list))
@@ -196,6 +209,7 @@ class ActionSet:
                 "name":        name,
                 "description": (fn.__doc__ or f"Spawn the '{name}' task.").strip(),
                 "params":      params,
+                "optional":    optional,
             })
 
         return specs
@@ -249,13 +263,13 @@ _TYPE_MAP: dict[Any, str] = {
 _OPTIONAL_PARAMS = frozenset({"depends_on"})
 
 
-def _param_schema(params: list[tuple]) -> dict:
+def _param_schema(params: list[tuple], optional: "set[str] | None" = None) -> dict:
     props: dict = {}
     required: list[str] = []
     for pname, ptype in params:
         json_type = _TYPE_MAP.get(ptype)
         props[pname] = {"type": json_type} if json_type else {}
-        if pname not in _OPTIONAL_PARAMS:
+        if pname not in _OPTIONAL_PARAMS and pname not in (optional or ()):
             required.append(pname)
     schema: dict = {"type": "object", "properties": props}
     if required:
@@ -269,7 +283,7 @@ def _to_openai(spec: dict) -> dict:
         "function": {
             "name":        spec["name"],
             "description": spec["description"],
-            "parameters":  _param_schema(spec["params"]),
+            "parameters":  _param_schema(spec["params"], spec.get("optional")),
         },
     }
 
@@ -278,7 +292,7 @@ def _to_anthropic(spec: dict) -> dict:
     return {
         "name":         spec["name"],
         "description":  spec["description"],
-        "input_schema": _param_schema(spec["params"]),
+        "input_schema": _param_schema(spec["params"], spec.get("optional")),
     }
 
 
