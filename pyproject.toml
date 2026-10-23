@@ -22,6 +22,7 @@ dev = [
     "pytest",
     "pytest-asyncio",
     "pytest-cov",
+    "ruff==0.17.2",   # same version as the CI lint job
 ]
 
 [tool.setuptools.packages.find]
