@@ -17,7 +17,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-mcp = ["mcp>=1.0"]
+mcp = ["mcp>=1.2,<2"]   # FastMCP (mcp.server.fastmcp) ships in 1.2+, removed in 2.0
 dev = [
     "pytest",
     "pytest-asyncio",

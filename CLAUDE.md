@@ -245,6 +245,17 @@ Child operators are first-class; runtime machinery (`Future`, `UID`, `artifacts`
 This is visible in the next cycle's `@observe` via `snapshot.objectives.get(k)` AND
 via `self.k` (the proxy). It is NOT in `snapshot.observations`.
 
+### External steering (MCP) — CUSTOM `{"mutation": Action | Decision}`
+`ADLMCPServer` builds its tools from `operator.get_actions().get_schema("anthropic")`, turns a tool
+call back into the `ActionSet`'s `Action` (or `Decision` for `stop`), pre-validates it with
+`_validate_actions`, and queues it as `CUSTOM`. `_apply_message` buffers it in `_pending_external`;
+`_take_external_actions` re-validates each one alone (drop + `log.warning`, never abort the run) and
+the run loop appends them AFTER the policy's actions, BEFORE `_check_goals`/action-ID
+assignment/`on_cycle` — so the Tunable boundary and action IDs apply unchanged. A `stop` mutation sets
+`_stop_event`. Other `CUSTOM` payloads (`Decision.notify`) are still not read by ADR. The server and
+operator must share one event loop; `serve()` uses FastMCP's `run_*_async` (its `run()` is sync).
+The `mcp` extra is pinned `<2` (mcp 2 removed `mcp.server.fastmcp`).
+
 ### Goal checking fires after DECIDE, before ACT
 `_check_goals(obs, snapshot, decision)` sets `decision.stop = True` if all goals are
 satisfied. The policy cannot prevent this. Actions in that cycle still execute (ACT

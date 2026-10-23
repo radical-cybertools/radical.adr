@@ -331,12 +331,14 @@ All inter-component communication enters through `inbox: asyncio.Queue`.
 | `TASK_EVENT` | AsyncFlow/local → Operator | `{uid, state, result/error}` |
 | `SNAPSHOT` | Child → Parent | child's `Snapshot` |
 | `DIRECTIVE` | Parent → Child | `{directives: dict}` |
-| `CUSTOM` | Parent → Child | arbitrary |
+| `CUSTOM` | Parent → Child (`notify`), MCP → Operator | arbitrary; `{"mutation": Action \| Decision}` is applied |
 | `STOP` | System → Operator | `None` |
 
 **Async tasks:** `future.add_done_callback(_deliver_task_event)` — synchronous, zero watcher coroutines, O(1) registration.
 
 **Local acts:** result delivered via `inbox.put_nowait(TASK_EVENT{DONE, result})` — same 1-cycle latency as async tasks, same visibility in next cycle's `@observe`.
+
+**External steering:** a `CUSTOM` message whose payload is `{"mutation": Action | Decision}` (what `ADLMCPServer` sends) is buffered at drain time. Its actions are validated one by one (an invalid one is logged and dropped, never aborting the run) and appended after the policy's actions in that cycle's `Decision`, so they pass the same `Tunable` boundary, action-ID assignment and `on_cycle` notification. They apply on cadence-skipped cycles too. A mutation with `stop=True` sets the stop event, like `STOP`. Any other `CUSTOM` payload is not read by ADR.
 
 ---
 
