@@ -51,11 +51,7 @@ from radical.adr.state import RuntimeState, Snapshot
 from radical.adr.tools import ActionSet
 
 from radical.adr.goals import Goal
-
-try:
-    import annotationlib  # Python 3.14+
-except ImportError:
-    annotationlib = None
+from radical.adr._compat import own_annotation_names, signature
 
 if TYPE_CHECKING:
     from radical.adr.observer import ObserverBase
@@ -66,19 +62,6 @@ log = logging.getLogger(__name__)
 _DRAIN_BATCH   = 64
 _DRAIN_TIMEOUT = 0.05   # seconds
 _MISSING       = object()  # sentinel for "no default value"
-
-
-def _own_annotation_names(klass: type) -> "list[str]":
-    """Names of the annotations declared on ``klass`` itself, never evaluated.
-
-    From Python 3.14 (PEP 649/749) class annotations are evaluated lazily and are not
-    in the class ``__dict__`` unless the module uses ``from __future__ import
-    annotations``; ``annotationlib`` reads them in STRING format, so an annotation
-    naming an undefined type cannot raise.
-    """
-    if annotationlib is not None:
-        return list(annotationlib.get_annotations(klass, format=annotationlib.Format.STRING))
-    return list(vars(klass).get("__annotations__", {}))
 
 # Instance attributes that must NOT be proxied to state.objectives
 _RESERVED = frozenset({
@@ -335,7 +318,7 @@ class Operator:
         # Collect annotated class attributes that represent operator state
         state_keys: set[str] = set()
         for klass in cls.__mro__:
-            for aname in _own_annotation_names(klass):
+            for aname in own_annotation_names(klass):
                 raw = vars(klass).get(aname, _MISSING)
                 if (not aname.startswith("_")
                         and aname not in _RESERVED
@@ -1233,7 +1216,7 @@ class Operator:
         try:
             params = [
                 (name, p)
-                for name, p in inspect.signature(fn).parameters.items()
+                for name, p in signature(fn).parameters.items()
                 if name != "self"
             ]
         except (ValueError, TypeError):

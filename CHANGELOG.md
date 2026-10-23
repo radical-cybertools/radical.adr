@@ -142,7 +142,11 @@ use case.
   seeded into or synced with `state.objectives`. Annotation names are now read with
   `annotationlib.get_annotations(..., format=STRING)` on 3.14, which never evaluates them,
   and from the class `__dict__` as before on 3.10–3.13. `Tunable` attributes were not
-  affected.
+  affected. On 3.14, `inspect.signature` also evaluates annotations, so an `@act` annotated
+  with a type imported only under `TYPE_CHECKING` made `get_schema` and spawn validation
+  raise `NameError`, ending the run. ADR now reads `@act` signatures with
+  `annotation_format=FORWARDREF` on 3.14; such a parameter renders untyped. The helpers
+  live in `radical.adr._compat`.
 
 - With action tracking enabled, local results and Futures without a backend `id`
   receive fresh task UIDs, preventing reused Python object addresses from

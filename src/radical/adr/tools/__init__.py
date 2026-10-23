@@ -6,9 +6,9 @@ Any reasoning backend (RulePolicy, LLMPolicy, LangGraph) can use the same action
 
 from __future__ import annotations
 
-import inspect
 from typing import TYPE_CHECKING, Any, Callable
 
+from radical.adr._compat import signature
 from radical.adr.decision import Action, ActionKind, Decision
 
 if TYPE_CHECKING:
@@ -181,7 +181,7 @@ class ActionSet:
 
         for name, fn in type(op)._adl_act_registry.items():  # type: ignore[attr-defined]
             try:
-                sig = inspect.signature(fn)
+                sig = signature(fn)
                 params = [
                     (pname, p.annotation)
                     for pname, p in sig.parameters.items()

@@ -269,6 +269,14 @@ Futures are stored on task spawn and never removed when the task completes.
 `_sync_running_states` iterates over all of them every cycle. For very long runs
 this grows without bound. Known limitation — do not add workarounds silently.
 
+### Read annotations through `radical.adr._compat` (Python 3.14)
+Under PEP 649/749, Python 3.14 has no `__annotations__` in a class `__dict__` unless the module uses
+`from __future__ import annotations`, and `inspect.signature` evaluates annotations, so a
+`TYPE_CHECKING`-only type raises `NameError`. Never read `vars(klass)["__annotations__"]` or call
+plain `inspect.signature` on user code: use `_compat.own_annotation_names(klass)` (STRING format,
+never evaluated) and `_compat.signature(fn)` (FORWARDREF format). Tests for this live in
+`tests/unit/test_annotated_state.py`, which must keep NOT using the `__future__` import.
+
 ### `_RESERVED` frozenset controls the proxy
 Any instance attribute in `_RESERVED` is NOT proxied to `state.objectives`.
 Any annotated class attribute NOT in `_RESERVED` IS proxied (read/write).
