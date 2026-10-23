@@ -35,8 +35,16 @@ def test_act_tool_exposes_optional_depends_on():
 
 class _ParamOp(Operator):
     @act
-    async def chained(self, *dep_futures, scale: float = 1.0, **extra):
+    async def chained(self, *dep_futures, scale: float = 1.0):
         return {"n": len(dep_futures)}
+
+    @act
+    async def gated(self, *dep_futures, tag: str):
+        return {"tag": tag}
+
+    @act
+    async def flexible(self, **options):
+        return options
 
     # String annotations are what `from __future__ import annotations` produces.
     @act
@@ -68,11 +76,20 @@ def test_defaulted_act_param_is_optional():
         assert params["required"] == ["x", "n"]
 
 
-def test_var_positional_and_var_keyword_params_not_rendered():
+def test_var_positional_param_not_rendered():
     for fmt in ("openai", "anthropic"):
         params = _tool(fmt, "chained")
         assert set(params["properties"]) == {"scale", "depends_on"}
         assert "required" not in params                       # nothing is required
+        assert "additionalProperties" not in params
+        assert _tool(fmt, "gated")["required"] == ["tag"]     # keyword-only, no default
+
+
+def test_var_keyword_param_allows_extra_keys():
+    for fmt in ("openai", "anthropic"):
+        params = _tool(fmt, "flexible")
+        assert set(params["properties"]) == {"depends_on"}    # no bogus 'options' param
+        assert params["additionalProperties"] is True
 
 
 def test_string_annotations_render_their_real_types():

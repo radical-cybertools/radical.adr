@@ -191,25 +191,30 @@ class ActionSet:
                 hints = typing.get_type_hints(fn)
             except Exception:
                 hints = {}
-            params: list[tuple] = []
+            act_params: list[tuple] = []
             optional: set[str] = set()
+            extra = False
             for pname, p in (sig.parameters.items() if sig else ()):
-                # *dep_futures receive depends_on futures and **kwargs has no names,
-                # so neither is a parameter an agent can fill.
-                if pname == "self" or p.kind in (p.VAR_POSITIONAL, p.VAR_KEYWORD):
+                # *dep_futures receive depends_on futures, so they are not a parameter
+                # an agent fills; **kwargs has no names, so it allows extra keys instead.
+                if pname == "self" or p.kind == p.VAR_POSITIONAL:
+                    continue
+                if p.kind == p.VAR_KEYWORD:
+                    extra = True
                     continue
                 ann = p.annotation
-                params.append((pname, hints.get(pname, ann) if isinstance(ann, str) else ann))
+                act_params.append((pname, hints.get(pname, ann) if isinstance(ann, str) else ann))
                 if p.default is not inspect.Parameter.empty:
                     optional.add(pname)
             # depends_on (optional) lets an LLM express task DAG dependencies —
             # upstream task UIDs that must be DONE before this @act runs.
-            params.append(("depends_on", list))
+            act_params.append(("depends_on", list))
             specs.append({
                 "name":        name,
                 "description": (fn.__doc__ or f"Spawn the '{name}' task.").strip(),
-                "params":      params,
+                "params":      act_params,
                 "optional":    optional,
+                "extra":       extra,
             })
 
         return specs
@@ -263,7 +268,9 @@ _TYPE_MAP: dict[Any, str] = {
 _OPTIONAL_PARAMS = frozenset({"depends_on"})
 
 
-def _param_schema(params: list[tuple], optional: "set[str] | None" = None) -> dict:
+def _param_schema(
+    params: list[tuple], optional: "set[str] | None" = None, extra: bool = False,
+) -> dict:
     props: dict = {}
     required: list[str] = []
     for pname, ptype in params:
@@ -272,6 +279,8 @@ def _param_schema(params: list[tuple], optional: "set[str] | None" = None) -> di
         if pname not in _OPTIONAL_PARAMS and pname not in (optional or ()):
             required.append(pname)
     schema: dict = {"type": "object", "properties": props}
+    if extra:
+        schema["additionalProperties"] = True
     if required:
         schema["required"] = required
     return schema
@@ -283,7 +292,8 @@ def _to_openai(spec: dict) -> dict:
         "function": {
             "name":        spec["name"],
             "description": spec["description"],
-            "parameters":  _param_schema(spec["params"], spec.get("optional")),
+            "parameters":  _param_schema(spec["params"], spec.get("optional"),
+                                         spec.get("extra", False)),
         },
     }
 
@@ -292,7 +302,8 @@ def _to_anthropic(spec: dict) -> dict:
     return {
         "name":         spec["name"],
         "description":  spec["description"],
-        "input_schema": _param_schema(spec["params"], spec.get("optional")),
+        "input_schema": _param_schema(spec["params"], spec.get("optional"),
+                                      spec.get("extra", False)),
     }
 
 

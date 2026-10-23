@@ -237,8 +237,8 @@ op.get_actions().get_schema("openai")   # | "anthropic" | "langgraph"
 
 `get_schema` is not an action — it renders every `@act` method's signature and docstring as
 vendor tool-call schemas, so an LLM policy is offered exactly the operator's real capabilities. A
-parameter with a default is optional. `*dep_futures` and `**kwargs` are not rendered: upstream futures
-come from `depends_on`. String annotations, as written by `from __future__ import annotations`, are
+parameter with a default is optional. `*dep_futures` is not rendered, because upstream futures come
+from `depends_on`. An `@act` that takes `**kwargs` accepts extra keys. String annotations, as written by `from __future__ import annotations`, are
 resolved to their types. See [LLM policies](/guides/llm-policies#tool-schemas-for-free).
 
 ## Next
