@@ -135,6 +135,15 @@ use case.
 
 ### Fixed
 
+- **Annotated operator attributes work on Python 3.14.** `Operator.__init_subclass__` found
+  state attributes through `vars(klass)["__annotations__"]`. Under Python 3.14's lazily
+  evaluated annotations (PEP 649/749) that entry is absent unless the module uses
+  `from __future__ import annotations`, so attributes like `radius: float = 5.0` were never
+  seeded into or synced with `state.objectives`. Annotation names are now read with
+  `annotationlib.get_annotations(..., format=STRING)` on 3.14, which never evaluates them,
+  and from the class `__dict__` as before on 3.10–3.13. `Tunable` attributes were not
+  affected.
+
 - With action tracking enabled, local results and Futures without a backend `id`
   receive fresh task UIDs, preventing reused Python object addresses from
   overwriting context. Backend-assigned IDs are retained; task UID behavior with
