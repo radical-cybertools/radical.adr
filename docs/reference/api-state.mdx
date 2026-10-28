@@ -64,7 +64,7 @@ The inbox is the only input channel.
 | `TASK_EVENT` | backend/local → operator | `{uid, state, result/error}` |
 | `SNAPSHOT` | child → parent | child `Snapshot` |
 | `DIRECTIVE` | parent → child | `{directives: dict}` |
-| `CUSTOM` | parent / MCP → operator | arbitrary mutation |
+| `CUSTOM` | parent / MCP → operator | arbitrary; `{"mutation": Action \| Decision}` is applied with the cycle's decision |
 | `STOP` | system → operator | `None` |
 
 ### `InboxMessage`
