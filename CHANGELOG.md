@@ -122,6 +122,14 @@ use case.
 
 ### Changed
 
+- **Task UIDs follow AsyncFlow's full uid.** A returned Future is now keyed by its
+  `uid` attribute (AsyncFlow's full uid, e.g. `task.000001` / `block.000002`, which
+  its telemetry and trace events use) before its bare `id` suffix (`000001`). This
+  applies to `runtime`, `task_context`, `result.{uid}` / `error.{uid}`, and child
+  start tracking, so `track_action_ids` links match AsyncFlow's own uids. AsyncFlow
+  sets `uid` at call time from radical-cybertools/radical.asyncflow#106
+  (unreleased); with AsyncFlow 0.6.0, which sets neither attribute at call time,
+  task UIDs are unchanged.
 - **Pre-flight action validation** — `Decision` actions are now validated as a batch
   *before* any are applied (validate-all-then-apply-all). A single invalid action
   raises one `ActionError` listing every problem and aborts the batch, so an invalid
@@ -161,8 +169,8 @@ use case.
   `typing.get_type_hints`; an unresolvable one still renders untyped. The `langgraph` format
   builds tools from the `ActionSet` callables and is unchanged.
 
-- With action tracking enabled, local results and Futures without a backend `id`
-  receive fresh task UIDs, preventing reused Python object addresses from
+- With action tracking enabled, local results and Futures without a backend `uid`
+  or `id` receive fresh task UIDs, preventing reused Python object addresses from
   overwriting context. Backend-assigned IDs are retained; task UID behavior with
   tracking disabled is unchanged.
 
