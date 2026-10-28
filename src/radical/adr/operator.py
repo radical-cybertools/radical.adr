@@ -1326,7 +1326,11 @@ class Operator:
         action_id: str | None = None,
     ) -> str:
         """Register a spawned Future and return its task UID (shared by tasks and operators)."""
-        uid = getattr(result, "id", _MISSING)
+        # Prefer AsyncFlow's full call-time uid (``task.000001``), which its
+        # telemetry and trace events use; ``id`` is the bare suffix (``000001``).
+        uid = getattr(result, "uid", None)
+        if uid is None:
+            uid = getattr(result, "id", _MISSING)
         if uid is _MISSING:
             # Object addresses can be reused after terminal Futures are pruned.
             uid = uuid4().hex if self._track_action_ids else id(result)
