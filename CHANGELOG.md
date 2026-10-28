@@ -159,6 +159,16 @@ use case.
   `mcp.server.fastmcp`), and the install hint names the right package:
   `pip install "radical.adr[mcp]"`.
 
+- **`@act` tool schemas match the method signatures.** `ActionSet.get_schema("openai")` and
+  `get_schema("anthropic")` marked every `@act` parameter required, including ones with defaults.
+  They rendered `*dep_futures` and `**kwargs` as ordinary parameters, so an `@act` taking
+  upstream futures could not be called from a tool call: its `dep_futures` argument was rejected
+  as an unknown kwarg. They also left string annotations (`from __future__ import annotations`)
+  untyped. Defaulted parameters are now optional, `*dep_futures` is not rendered, `**kwargs`
+  renders as `additionalProperties: true`, and string annotations are resolved with
+  `typing.get_type_hints`; an unresolvable one still renders untyped. The `langgraph` format
+  builds tools from the `ActionSet` callables and is unchanged.
+
 - **Annotated operator attributes work on Python 3.14.** `Operator.__init_subclass__` found
   state attributes through `vars(klass)["__annotations__"]`. Under Python 3.14's lazily
   evaluated annotations (PEP 649/749) that entry is absent unless the module uses
