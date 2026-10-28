@@ -272,10 +272,11 @@ Future or local result returned by an `@act`, and for child launches/restarts;
 backend subtasks hidden inside an action are outside this scope. A retry's new
 task points to the retry action, whose `target_uid` identifies the preceding task.
 
-With tracking enabled, local results and Futures without a backend `id` receive
-fresh UUID-based task UIDs; backend-assigned IDs are retained. Subsequent snapshots
+A returned Future is keyed by its backend uid: `future.uid` (AsyncFlow's full uid,
+e.g. `task.000001`) when set, else `future.id`. With tracking enabled, local results
+and Futures with neither receive fresh UUID-based task UIDs. Subsequent snapshots
 expose new context, and checkpoints preserve it. Tracking defaults to `False`,
-retaining legacy task context and UID behavior; unset action IDs are omitted from
+retaining legacy task context and the object-address-based fallback UIDs; unset action IDs are omitted from
 serialization. Each operator opts in independently. Applications own persistence
 and links to domain-specific decisions; observers provide the debugging channel.
 
@@ -613,6 +614,8 @@ op      = MyOperator(engine)
 ### `@act` and `engine.block`
 
 ADR does **not** pre-register `@act` methods with AsyncFlow. Each `@act` method calls `self.engine.function_task(fn)(...)` or `self.engine.block(fn)(...)` at invocation time — each call creates a fresh component with a new UID, which is correct by AsyncFlow's design.
+
+ADR keys each returned Future by `future.uid`, the full uid AsyncFlow assigns at call time (`task.000001`, `block.000002`) and uses in its telemetry and trace events, falling back to the bare `future.id` (`000001`). AsyncFlow 0.6.0 sets neither at call time, so ADR generates the key (see *Optional action links*). Treat task UIDs as opaque strings: ADR never parses them.
 
 Module-level functions passed to `engine.function_task` must be importable (picklable) when using `ProcessPoolExecutor`. When using `ThreadPoolExecutor` or running locally, any async function works.
 
