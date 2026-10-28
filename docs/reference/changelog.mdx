@@ -89,6 +89,10 @@ verbs, user-facing `enable_logging(...)`, and a 7-item API-hardening pass. Full 
   `ActionSet`, the operator applies queued `CUSTOM` mutations with the cycle's decision (same
   boundary and action IDs), and `serve()` runs FastMCP's async transport. The `mcp` extra is
   pinned to `mcp>=1.2,<2`. See [MCP server](/integrations/mcp-server).
+- `@act` tool schemas match the method signatures: parameters with defaults are optional,
+  `*dep_futures` is not rendered, `**kwargs` allows extra keys, and string annotations get their
+  real types. See
+  [Built-in actions](/concepts/built-in-actions).
 - A hung primary in a `Policy(primary, fallback)` composition previously blocked the loop
   indefinitely — now bounded by `timeout`.
 - A goal landing exactly on its threshold never fired under strict `<`/`>` — addressable via
