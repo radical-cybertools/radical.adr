@@ -28,9 +28,10 @@ emitted action that launched the tracked work. Links cover the Future or local
 result returned by an `@act`, and child-operator launches/restarts; they do not
 identify backend subtasks hidden inside an action.
 
-With tracking enabled, local results and Futures without a backend `id` receive
-fresh UUID-based task UIDs. Backend-assigned IDs are retained. With tracking
-disabled, task UID behavior is unchanged.
+A returned Future is keyed by its backend uid: `future.uid` (AsyncFlow's full uid,
+e.g. `task.000001`) when set, else `future.id`. With tracking enabled, local results
+and Futures with neither receive fresh UUID-based task UIDs. With tracking
+disabled, they keep the legacy object-address-based UIDs.
 
 Retries point to the new retry action, whose `target_uid` identifies the previous
 task. Context survives task completion and checkpointing. Older checkpoints and
@@ -63,7 +64,7 @@ The inbox is the only input channel.
 | `TASK_EVENT` | backend/local → operator | `{uid, state, result/error}` |
 | `SNAPSHOT` | child → parent | child `Snapshot` |
 | `DIRECTIVE` | parent → child | `{directives: dict}` |
-| `CUSTOM` | parent / MCP → operator | arbitrary mutation |
+| `CUSTOM` | parent / MCP → operator | arbitrary; `{"mutation": Action \| Decision}` is applied with the cycle's decision |
 | `STOP` | system → operator | `None` |
 
 ### `InboxMessage`

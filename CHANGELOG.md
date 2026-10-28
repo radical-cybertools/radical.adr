@@ -129,6 +129,14 @@ use case.
 
 ### Changed
 
+- **Task UIDs follow AsyncFlow's full uid.** A returned Future is now keyed by its
+  `uid` attribute (AsyncFlow's full uid, e.g. `task.000001` / `block.000002`, which
+  its telemetry and trace events use) before its bare `id` suffix (`000001`). This
+  applies to `runtime`, `task_context`, `result.{uid}` / `error.{uid}`, and child
+  start tracking, so `track_action_ids` links match AsyncFlow's own uids. AsyncFlow
+  sets `uid` at call time from radical-cybertools/radical.asyncflow#106
+  (unreleased); with AsyncFlow 0.6.0, which sets neither attribute at call time,
+  task UIDs are unchanged.
 - **Pre-flight action validation** — `Decision` actions are now validated as a batch
   *before* any are applied (validate-all-then-apply-all). A single invalid action
   raises one `ActionError` listing every problem and aborts the batch, so an invalid
@@ -142,8 +150,34 @@ use case.
 
 ### Fixed
 
-- With action tracking enabled, local results and Futures without a backend `id`
-  receive fresh task UIDs, preventing reused Python object addresses from
+- **External steering through MCP works.** `ADLMCPServer` could not be constructed: it
+  imported `ASYNCFLOW_TOOLS` from a deprecation stub that defines nothing. It now builds
+  its tools from the operator's `ActionSet` (the same schemas as `get_schema`), and its
+  `tools` argument takes an `ActionSet`. The operator dropped every `CUSTOM` message, so
+  queued MCP mutations were never applied. A `CUSTOM` payload `{"mutation": Action |
+  Decision}` now joins the cycle's decision after the policy's actions, with the same
+  `Tunable` boundary, action IDs and observer notification; a `stop` takes the `STOP`
+  path. An invalid external action gets an error reply from the server; one that turns
+  invalid, or fails when applied (for example its `@act` raises), is dropped with a
+  warning, without aborting the run. Other `CUSTOM` payloads (such
+  as `Decision.notify`) are still not read by ADR. `serve()` awaits FastMCP's async
+  stdio/SSE runner instead of the synchronous `run()`, which failed inside a running
+  event loop. The `mcp` extra is pinned to `mcp>=1.2,<2` (mcp 2 removed
+  `mcp.server.fastmcp`), and the install hint names the right package:
+  `pip install "radical.adr[mcp]"`.
+
+- **`@act` tool schemas match the method signatures.** `ActionSet.get_schema("openai")` and
+  `get_schema("anthropic")` marked every `@act` parameter required, including ones with defaults.
+  They rendered `*dep_futures` and `**kwargs` as ordinary parameters, so an `@act` taking
+  upstream futures could not be called from a tool call: its `dep_futures` argument was rejected
+  as an unknown kwarg. They also left string annotations (`from __future__ import annotations`)
+  untyped. Defaulted parameters are now optional, `*dep_futures` is not rendered, `**kwargs`
+  renders as `additionalProperties: true`, and string annotations are resolved with
+  `typing.get_type_hints`; an unresolvable one still renders untyped. The `langgraph` format
+  builds tools from the `ActionSet` callables and is unchanged.
+
+- With action tracking enabled, local results and Futures without a backend `uid`
+  or `id` receive fresh task UIDs, preventing reused Python object addresses from
   overwriting context. Backend-assigned IDs are retained; task UID behavior with
   tracking disabled is unchanged.
 

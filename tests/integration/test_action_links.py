@@ -172,7 +172,7 @@ async def test_delayed_results_keep_their_origin_after_policy_changes(tmp_path):
 
 
 @pytest.mark.parametrize("track_action_ids", [False, True])
-@pytest.mark.parametrize("native_ids", [False, True])
+@pytest.mark.parametrize("native_ids", [None, "id", "uid"])
 async def test_future_identity_survives_pruning(tmp_path, monkeypatch,
                                               track_action_ids, native_ids):
     # Simulate address reuse deterministically, without retaining completed Futures.
@@ -188,6 +188,8 @@ async def test_future_identity_survives_pruning(tmp_path, monkeypatch,
             future = asyncio.get_running_loop().create_future()
             if native_ids:
                 future.id = f"backend.{value}"
+            if native_ids == "uid":  # AsyncFlow's full uid takes precedence over id
+                future.uid = f"task.{value}"
             future.set_result(value)
             return future
 
@@ -212,7 +214,9 @@ async def test_future_identity_survives_pruning(tmp_path, monkeypatch,
     assert results == [0, 1, 2]
     assert not op.state.task_futures
     context = op.state.task_context
-    if native_ids:
+    if native_ids == "uid":
+        assert set(context) == {"task.0", "task.1", "task.2"}
+    elif native_ids:
         assert set(context) == {"backend.0", "backend.1", "backend.2"}
     elif not track_action_ids:
         assert set(context) == {"7"}  # legacy fallback is unchanged
@@ -300,3 +304,63 @@ async def test_retry_from_legacy_checkpoint_adds_link_only_to_new_task(tmp_path)
     retry_action = _records(path)[0]["decision"]["actions"][0]
     assert new_context["action_id"] == retry_action["action_id"]
     assert retry_action["target_uid"] == "old-task"
+
+
+async def _double_impl(x: int) -> int:
+    return 2 * x
+
+
+async def test_asyncflow_keys_are_call_time_uids(engine, tmp_path, monkeypatch):
+    # Task and block keys must be AsyncFlow's full uids (``task.000001``,
+    # ``block.000002``), which its telemetry and trace events use, not the
+    # bare ``future.id`` suffix.
+    tasks, blocks = [], []
+
+    class TaskOp(Operator):
+        @act
+        async def double(self, x: int):
+            future = self.engine.function_task(_double_impl)(x=x)
+            tasks.append((future, getattr(future, "uid", None)))
+            return future
+
+        @observe
+        def extract(self, snapshot):
+            return {"cycle": snapshot.cycle}
+
+    path = tmp_path / "trace.jsonl"
+    parent = TaskOp(engine, observer=RecordingObserver(str(path)),
+                    max_runtime=60.0, track_action_ids=True)
+    child = TaskOp(engine)
+    start = child.start
+
+    def capture_start(*deps):
+        block = start(*deps)
+        blocks.append(block)
+        return block
+
+    monkeypatch.setattr(child, "start", capture_start)
+    parent.add_child("child", child, policy=_ScriptPolicy(lambda obs: Decision(stop=True)))
+    acts = parent.get_actions()
+    parent.policy = _ScriptPolicy(lambda obs: (
+        Decision(actions=[acts.double(x=3), acts.spawn_operator("child")])
+        if obs["cycle"] == 0
+        else Decision(stop=parent.child("child").done and not parent.inflight)
+    ))
+    observations = {}
+    async for snapshot in parent.run():
+        observations.update(snapshot.observations)
+
+    (task, call_time_uid), = tasks
+    if call_time_uid is None:
+        pytest.skip("this AsyncFlow sets no future.uid at call time "
+                    "(radical-cybertools/radical.asyncflow#106 is unreleased)")
+    block, = blocks
+    emitted = [a for r in _records(path) for a in r["decision"]["actions"]]
+    task_uid, block_uid = list(parent.state.task_context)
+    assert task_uid == call_time_uid == task.task["uid"]
+    assert block_uid == parent._child_starts["child"] == block.block["uid"]
+    assert observations[f"result.{task_uid}"] == 6
+    assert parent.child("child").done
+    assert [parent.state.task_context[uid]["action_id"] for uid in (task_uid, block_uid)] == [
+        action["action_id"] for action in emitted[:2]
+    ]
