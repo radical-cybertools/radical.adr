@@ -82,6 +82,10 @@ verbs, user-facing `enable_logging(...)`, and a 7-item API-hardening pass. Full 
 
 ### Fixed
 
+- External steering through MCP works: `ADLMCPServer` builds its tools from the operator's
+  `ActionSet`, the operator applies queued `CUSTOM` mutations with the cycle's decision (same
+  boundary and action IDs), and `serve()` runs FastMCP's async transport. The `mcp` extra is
+  pinned to `mcp>=1.2,<2`. See [MCP server](/integrations/mcp-server).
 - Annotated operator attributes (`radius: float = 5.0`) are proxied into `state.objectives` on
   Python 3.14 too, where class annotations are evaluated lazily; an `@act` annotated with a
   `TYPE_CHECKING`-only type no longer raises `NameError` there.

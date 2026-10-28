@@ -135,6 +135,22 @@ use case.
 
 ### Fixed
 
+- **External steering through MCP works.** `ADLMCPServer` could not be constructed: it
+  imported `ASYNCFLOW_TOOLS` from a deprecation stub that defines nothing. It now builds
+  its tools from the operator's `ActionSet` (the same schemas as `get_schema`), and its
+  `tools` argument takes an `ActionSet`. The operator dropped every `CUSTOM` message, so
+  queued MCP mutations were never applied. A `CUSTOM` payload `{"mutation": Action |
+  Decision}` now joins the cycle's decision after the policy's actions, with the same
+  `Tunable` boundary, action IDs and observer notification; a `stop` takes the `STOP`
+  path. An invalid external action gets an error reply from the server; one that turns
+  invalid, or fails when applied (for example its `@act` raises), is dropped with a
+  warning, without aborting the run. Other `CUSTOM` payloads (such
+  as `Decision.notify`) are still not read by ADR. `serve()` awaits FastMCP's async
+  stdio/SSE runner instead of the synchronous `run()`, which failed inside a running
+  event loop. The `mcp` extra is pinned to `mcp>=1.2,<2` (mcp 2 removed
+  `mcp.server.fastmcp`), and the install hint names the right package:
+  `pip install "radical.adr[mcp]"`.
+
 - **Annotated operator attributes work on Python 3.14.** `Operator.__init_subclass__` found
   state attributes through `vars(klass)["__annotations__"]`. Under Python 3.14's lazily
   evaluated annotations (PEP 649/749) that entry is absent unless the module uses

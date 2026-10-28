@@ -69,7 +69,7 @@ _RESERVED = frozenset({
     "state", "inbox", "children", "_child_starts", "_child_config",
     "_stop_event", "_adl_actionset", "_policy", "_runtime_goals", "_block_factory",
     "_max_cycles", "_max_runtime", "_started_at", "_goal_streaks", "_budget",
-    "_pending_rejections", "decide_when", "_track_action_ids",
+    "_pending_rejections", "decide_when", "_track_action_ids", "_pending_external",
 })
 
 
@@ -362,6 +362,7 @@ class Operator:
         object.__setattr__(self, "_goal_streaks",  {})            # goal name → consecutive-satisfied
         object.__setattr__(self, "_budget",        list(budget) if budget else [])
         object.__setattr__(self, "_pending_rejections", {})       # param → rejection evidence
+        object.__setattr__(self, "_pending_external", [])         # externally queued Actions
 
         object.__setattr__(self, "_policy",        policy)
         object.__setattr__(self, "_runtime_goals", [])
@@ -847,7 +848,14 @@ class Operator:
                 else:
                     decision = Decision()                           # cadence-skipped cycle
 
-
+                # Externally queued actions (CUSTOM mutations, e.g. from ADLMCPServer)
+                # join this cycle's decision after the policy's own, so they share its
+                # Tunable boundary, action-ID assignment and observer notification.
+                n_policy = len(decision.actions)
+                external = self._take_external_actions()
+                if external:
+                    decision = decision.model_copy(
+                        update={"actions": [*decision.actions, *external]})
 
                 self._check_goals(obs, snapshot, decision)
                 self._apply_goal_changes(decision)
@@ -869,7 +877,8 @@ class Operator:
                 if self.observer is not None:
                     self.observer.on_cycle(snapshot, obs, decision)
 
-                await self._apply_actions(decision.actions)         # 4. ACT
+                await self._apply_actions(decision.actions[:n_policy])   # 4. ACT
+                await self._apply_external_actions(decision.actions[n_policy:])
                 await self._dispatch(decision)
 
                 if decision.stop:
@@ -1090,6 +1099,52 @@ class Operator:
                 self.state.objectives[f"child:{child_id}:runtime:{k}"] = v
             for k, v in snapshot.objectives.items():
                 self.state.objectives[f"child:{child_id}:obj:{k}"] = v
+
+        elif msg.kind == MessageKind.CUSTOM:
+            # External steering (ADLMCPServer) sends {"mutation": Action | Decision}.
+            # Actions wait for this cycle's ACT; a stop takes the STOP path. Any other
+            # CUSTOM payload (e.g. Decision.notify) is left to user code, as before.
+            payload  = msg.payload
+            mutation = payload.get("mutation") if isinstance(payload, dict) else None
+            pending: list = object.__getattribute__(self, "_pending_external")
+            if isinstance(mutation, Action):
+                pending.append(mutation)
+            elif isinstance(mutation, Decision):
+                pending.extend(mutation.actions)
+                if mutation.stop:
+                    self._stop_event.set()
+
+    def _take_external_actions(self) -> list[Action]:
+        """Pop externally queued actions, dropping (and logging) any that fail validation.
+
+        Each is validated on its own, against the state at this cycle, so one invalid
+        external request cannot abort the policy's batch or the run.
+        """
+        pending: list = object.__getattribute__(self, "_pending_external")
+        accepted: list[Action] = []
+        for act in pending:
+            try:
+                self._validate_actions([act])
+            except ActionError as exc:
+                log.warning("operator '%s': external %s dropped: %s",
+                            self.operator_id, act.kind.value, exc)
+                continue
+            accepted.append(act)
+        pending.clear()
+        return accepted
+
+    async def _apply_external_actions(self, actions: list[Action]) -> None:
+        """Apply validated external actions; one that fails is logged, never raised.
+
+        An external client must not be able to end the run (e.g. with an argument
+        the @act cannot handle), so a failure here drops only that action.
+        """
+        for act in actions:
+            try:
+                await self._apply_one(act)
+            except Exception:
+                log.warning("operator '%s': external %s failed", self.operator_id,
+                            act.kind.value, exc_info=True)
 
     # ── Action application ───────────────────────────────────────────────────
 
@@ -1511,6 +1566,7 @@ class Operator:
         for key, value in self._child_config.get(name, {}).items():
             setattr(child, key, value)
         child._stop_event.clear()
+        child._pending_external.clear()
         object.__setattr__(child, "_block_factory", None)
 
     async def _restart_operator(self, act: Action) -> asyncio.Future:
