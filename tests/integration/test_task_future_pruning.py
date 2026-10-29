@@ -48,13 +48,13 @@ class _DagPolicy(Policy):
             return Decision(actions=[self._act.consume(depends_on=[uid])])
         if obs["cycle"] == 0:
             return Decision(actions=[self._act.produce(x=7.0)])
-        if obs["cycle"] >= 12:
-            return Decision(stop=True)
         return Decision()
 
 
 async def test_consume_resolves_dep_after_produce_is_pruned(engine):
-    op = _DagOp(engine)
+    # Stop on the consumed result, not a cycle count: produce waits for a new
+    # worker process to start. max_runtime only bounds a regression.
+    op = _DagOp(engine, max_runtime=30.0)
     op.policy = _DagPolicy(op)
     final = None
     async for snap in op.run():
