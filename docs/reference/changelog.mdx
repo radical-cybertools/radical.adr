@@ -93,6 +93,9 @@ verbs, user-facing `enable_logging(...)`, and a 7-item API-hardening pass. Full 
   `*dep_futures` is not rendered, `**kwargs` allows extra keys, and string annotations get their
   real types. See
   [Built-in actions](/concepts/built-in-actions).
+- Annotated operator attributes (`radius: float = 5.0`) are proxied into `state.objectives` on
+  Python 3.14 too, where class annotations are evaluated lazily; an `@act` annotated with a
+  `TYPE_CHECKING`-only type no longer raises `NameError` there.
 - A hung primary in a `Policy(primary, fallback)` composition previously blocked the loop
   indefinitely — now bounded by `timeout`.
 - A goal landing exactly on its threshold never fired under strict `<`/`>` — addressable via

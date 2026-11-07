@@ -51,6 +51,7 @@ from radical.adr.state import RuntimeState, Snapshot
 from radical.adr.tools import ActionSet
 
 from radical.adr.goals import Goal
+from radical.adr._compat import own_annotation_names, signature
 
 if TYPE_CHECKING:
     from radical.adr.observer import ObserverBase
@@ -317,7 +318,7 @@ class Operator:
         # Collect annotated class attributes that represent operator state
         state_keys: set[str] = set()
         for klass in cls.__mro__:
-            for aname in vars(klass).get("__annotations__", {}):
+            for aname in own_annotation_names(klass):
                 raw = vars(klass).get(aname, _MISSING)
                 if (not aname.startswith("_")
                         and aname not in _RESERVED
@@ -1270,7 +1271,7 @@ class Operator:
         try:
             params = [
                 (name, p)
-                for name, p in inspect.signature(fn).parameters.items()
+                for name, p in signature(fn).parameters.items()
                 if name != "self"
             ]
         except (ValueError, TypeError):
