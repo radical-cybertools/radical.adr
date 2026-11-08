@@ -8,7 +8,6 @@ original behavior exactly.
 import asyncio
 import logging
 
-import pytest
 
 from radical.adr.decision import Decision
 from radical.adr.policy.base import Policy, decide

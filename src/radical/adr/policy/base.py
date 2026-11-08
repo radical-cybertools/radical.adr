@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import TYPE_CHECKING, Any, Callable
+from typing import Any, Callable
 
 from radical.adr.decision import Decision
 from radical.adr.errors import PolicyError

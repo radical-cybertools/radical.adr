@@ -316,7 +316,12 @@ $PYTHON -m pytest tests/ -v              # all tiers
 $PYTHON -m pytest tests/unit/ -v         # pure logic, no engine
 $PYTHON -m pytest tests/integration/ -v  # operator cycles
 $PYTHON -m pytest tests/smoke/ -v        # end-to-end
+ruff check .                             # lint; rules in [tool.ruff.lint] in pyproject.toml
 ```
+
+CI (`.github/workflows/ci.yml`) runs `ruff check .` (ruff 0.17.2), then the full suite on
+Python 3.10–3.14 with `pip install -e ".[dev,mcp]"`, on every pull request and on pushes to
+`main` and `feature/prototype`.
 
 - `asyncio_mode = "auto"` — no `@pytest.mark.asyncio` needed
 - `conftest.py` provides a single `engine` fixture (async, scoped to function)

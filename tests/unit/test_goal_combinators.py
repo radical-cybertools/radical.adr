@@ -10,9 +10,8 @@ Covers:
 
 import time
 
-from radical.adr import AllGoal, AnyGoal, Decision, Goal, Operator, decide, goals, observe
+from radical.adr import AllGoal, AnyGoal, Decision, Goal, Operator, goals, observe
 from radical.adr.goals import goal_from_dict, goal_to_dict
-from radical.adr.policy.base import Policy
 from radical.adr.state import Snapshot
 
 
