@@ -4,13 +4,13 @@ name: Mintlify Documentation
 on:
   push:
     branches:
-      - feature/prototype
+      - feature/publish-docs
     paths:
       - 'docs/**'
 
   pull_request:
     branches:
-      - feature/prototype
+      - feature/publish-docs
     paths:
       - 'docs/**'
 
