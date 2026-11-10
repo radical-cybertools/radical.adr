@@ -1,0 +1,42 @@
+
+name: Mintlify Documentation
+
+on:
+  push:
+    branches:
+      - feature/publish-docs
+    paths:
+      - 'docs/**'
+
+  pull_request:
+    branches:
+      - feature/publish-docs
+    paths:
+      - 'docs/**'
+
+jobs:
+  docs:
+    name: Validate Mintlify Docs
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: docs
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install Mintlify CLI
+        run: npm install -g mint
+
+      - name: Validate documentation
+        run: mint validate
+
+      - name: Check broken links
+        run: mint broken-links
