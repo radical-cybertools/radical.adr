@@ -1,0 +1,95 @@
+---
+title: "The Operator"
+description: "The autonomous agent that owns state and drives the Observe → Decide → Act cycle."
+---
+
+The `Operator` is the central runtime class. You **subclass** it to define a campaign: its state,
+its capabilities (`@act`), how it reads results (`@observe`), and when it is done (`@goals`). The
+decision logic lives in a separate [`Policy`](/concepts/policies) so you can swap it without
+touching the operator.
+
+## Defining an operator
+
+```python
+from radical.adr import Operator, act, observe, goals
+from radical.adr.goals import Goal
+
+class SearchOperator(Operator):
+    center: float = 0.0   # annotated attrs → state.objectives (persist across cycles)
+    radius: float = 5.0
+
+    @goals
+    def convergence_criteria(self):
+        return Goal(name="converged", metric="radius",
+                    threshold=0.005, direction="minimize")
+
+    @act
+    async def evaluate(self, x: float, seed: int = 0) -> dict:
+        rng = random.Random(seed)
+        return {"x": x, "value": (x - TARGET) ** 2 + rng.gauss(0, 0.03)}
+
+    @observe
+    def extract(self, snapshot) -> dict:
+        ...
+```
+
+The decorators are registered **once at class-definition time** — there is no per-instance setup. Annotated class attributes (`center`, `radius`) become persistent objectives:
+writing `self.radius = 2.5` transparently writes to `state.objectives["radius"]`, and the value is
+visible in every later `snapshot.objectives`.
+
+## Constructing one
+
+```python
+op = SearchOperator(engine, max_cycles=500)
+op.policy = SearchPolicy(op)
+```
+
+| Parameter | Meaning |
+|---|---|
+| `engine` | The AsyncFlow `WorkflowEngine` (required). |
+| `operator_id` | Stable id; defaults to the class name. |
+| `policy` | A `Policy` (can also be assigned later via `op.policy = ...`). |
+| `parent` | Set automatically for child operators. |
+| `observer` | An [`ObserverBase`](/guides/record-and-replay) for tracing/recording. |
+| `max_cycles` | Safety valve — forces stop after N cycles. |
+| `max_runtime` | Safety valve — forces stop after N wall-clock seconds. |
+
+## Lifecycle methods
+
+| Method | Description |
+|--------|-------------|
+| `run()` | Async generator — yields one `Snapshot` per cycle. The primary entry point. |
+| `run_to_completion()` | Consumes `run()`, returns the final `Snapshot`. |
+| `start(*dep_futures)` | Registers `run_to_completion()` as an `engine.block`; returns the block `Future`. Used internally for operator-level DAG chaining — you rarely call it directly. |
+| `shutdown()` | Sets the stop event and posts `STOP` to the inbox. |
+
+```python
+async for snapshot in op.run():
+    print(snapshot.cycle, op.radius)
+```
+
+## Children
+
+An operator can own child operators, declared with `add_child` and launched from the policy with
+`acts.spawn_operator(...)`. Children are first-class — you observe them through a read-only
+[`ChildHandle`](/guides/hierarchical-operators) and never touch a `Future` or UID. See
+[Hierarchical operators](/guides/hierarchical-operators).
+
+## Gotchas
+
+- **`@observe` is mandatory.** Without it, `run()` raises `TypeError` before the first cycle —
+  there is no default observation.
+- **`@decide` lives on the policy, not the operator.** An operator with no policy has nothing to
+  decide with.
+- **Annotated attributes must have defaults** to be picked up as objectives.
+
+## Next
+
+<CardGroup cols={2}>
+  <Card title="Decorators" icon="at" href="/concepts/decorators">
+    `@act`, `@observe`, `@goals` in depth.
+  </Card>
+  <Card title="The cycle" icon="arrows-rotate" href="/concepts/the-cycle">
+    What `run()` actually does each iteration.
+  </Card>
+</CardGroup>

@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "radical.adr"
+version = "0.1.0"
+description = "Autonomous Decision Runtime for HPC scientific workflows"
+authors = [
+    {name = "Aymen Alsaadi", email = "aymen.alsaadi@rutgers.edu"},
+    {name = "RADICAL Lab"},
+]
+requires-python = ">=3.10"
+dependencies = [
+    "pydantic>=2",
+    "radical.asyncflow",
+]
+
+[project.optional-dependencies]
+mcp = ["mcp>=1.2,<2"]   # FastMCP (mcp.server.fastmcp) ships in 1.2+, removed in 2.0
+dev = [
+    "pytest",
+    "pytest-asyncio",
+    "pytest-cov",
+    "ruff==0.17.2",   # same version as the CI lint job
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"radical.adr" = ["py.typed"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]

@@ -1,0 +1,89 @@
+---
+title: "Adaptive Search"
+description: "The canonical operator: shrink a search window until a goal converges."
+---
+
+This is the reference pattern every other guide builds on — an operator that searches for the
+minimum of a noisy function by shrinking a window around the best point each cycle, and stops itself
+on a convergence goal rather than a counter.
+
+**Runnable example:** [`examples/01-asyncflow-adaptive-search.py`](https://github.com/radical-cybertools/radical.adr/blob/main/examples/01-asyncflow-adaptive-search.py)
+
+If you have not built it yet, the [quickstart](/get-started/quickstart) walks the full code
+step by step. This guide focuses on *why the pattern works* and how to vary it.
+
+## The shape of the task
+
+`f(x) = (x − π)² + noise`. We want the `x` that minimizes it. The operator:
+
+1. Evaluates a handful of points across the current window.
+2. Observes results, finds the best.
+3. Recenters on the best point and **halves the radius**.
+4. Repeats until `radius < MIN_RADIUS`.
+
+The stop is a `Goal`, not a loop bound:
+
+```python
+@goals
+def convergence_criteria(self):
+    return Goal(name="converged", metric="radius",
+                threshold=MIN_RADIUS, direction="minimize")
+```
+
+## The one-cycle-latency habit
+
+The policy never assumes a freshly-spawned `evaluate` is done. It reads results that arrived in the
+inbox *last* cycle, via `@observe`:
+
+```python
+@observe
+def extract(self, snapshot) -> dict:
+    new_results = [v for k, v in snapshot.observations.items()
+                   if k.startswith("result.") and isinstance(v, dict) and "x" in v]
+    history = list(snapshot.objectives.get("history", [])) + new_results
+    best    = min(history, key=lambda r: r["value"]) if history else None
+    return {"history": history, "best": best,
+            "center": snapshot.objectives.get("center", 0.0),
+            "radius": snapshot.objectives.get("radius", 5.0),
+            "cycle":  snapshot.cycle}
+```
+
+The first cycle has no results yet (`best is None`), so the policy seeds the search; every later
+cycle shrinks the window. See [The cycle](/concepts/the-cycle#the-one-cycle-latency).
+
+## Run it
+
+```bash
+python examples/01-asyncflow-adaptive-search.py
+```
+
+```
+cycle  0  center=+0.000000  radius=5.000000
+cycle  1  center=+0.035679  radius=2.500000
+cycle  2  center=+2.912374  radius=1.250000
+...
+cycle 11  center=+3.141563  radius=0.003906
+
+best x=3.141591  error=0.000032
+```
+
+It stops at cycle 11 — because the `radius` goal `(< 0.005)` was met, not because a counter expired.
+
+## Variations
+
+- **Change when it stops** — edit the `threshold` in `Goal`.
+- **Search harder** — spawn more `evaluate` points per cycle (the list-comprehension in the policy).
+- **Run it for real** — swap the local `@act` body for `self.engine.function_task(_impl)(...)` to
+  dispatch to a backend. See [Decorators](/concepts/decorators#act-methods-vs-module-level-impls).
+- **Add a budget goal** — see [Goals & convergence](/guides/goals-and-convergence).
+
+## Next
+
+<CardGroup cols={2}>
+  <Card title="Goals & convergence" icon="bullseye" href="/guides/goals-and-convergence">
+    Stop on multiple conditions at once.
+  </Card>
+  <Card title="LLM policies" icon="robot" href="/guides/llm-policies">
+    Replace the rule policy with a model.
+  </Card>
+</CardGroup>

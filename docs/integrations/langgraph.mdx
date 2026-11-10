@@ -1,0 +1,74 @@
+---
+title: "LangGraph"
+description: "Use a LangGraph agent as the operator's decision policy."
+---
+
+A LangGraph graph can serve as the `@decide` policy. The division of labor is clean:
+
+- **LangGraph** reasons about observations and decides what to compute next.
+- **ADR** executes those decisions on AsyncFlow, tracks goals, and stops autonomously.
+
+LangGraph decides *what*; ADR enforces *when to stop* and *how to run it*.
+
+**Runnable example:** [`examples/09-langgraph-policy.py`](https://github.com/radical-cybertools/radical.adr/blob/main/examples/09-langgraph-policy.py)
+
+## The pattern
+
+Wrap a compiled `StateGraph` inside a `Policy`'s `@decide`. The graph produces structured output;
+the policy turns it into a `Decision`:
+
+```python
+from radical.adr import LLMPolicy, decide, Decision
+
+class LangGraphPolicy(LLMPolicy):
+    def __init__(self, op):
+        super().__init__()
+        self._act   = op.get_actions()
+        self._graph = build_graph()   # StateGraph(...).compile()
+
+    @decide
+    async def run(self, obs: dict) -> Decision:
+        result = await self._graph.ainvoke({"obs": obs})
+        move   = result["move"]       # structured output (pydantic)
+        return Decision(
+            actions=[self._act.update_param("center", move.center),
+                     self._act.update_param("radius", move.radius),
+                     *[self._act.evaluate(x=p) for p in move.points]],
+            goals=move.new_goals,     # the agent may tighten goals at runtime
+        )
+```
+
+## What ADR adds on top of LangGraph
+
+| LangGraph alone | With ADR |
+|---|---|
+| Reasons over state, returns a decision | Executes the decision on AsyncFlow |
+| No notion of long-running HPC tasks | One-cycle-latency task tracking, Futures handled for you |
+| Stops when the graph says so | Stops when **goals** are satisfied — the agent can't loop forever |
+| You hand-build tool schemas | `op.get_actions("langgraph")` renders `@act` signatures as tools |
+
+## Runtime goal proposals
+
+Because the graph is just a policy, it can propose new convergence criteria mid-campaign via
+`Decision(goals=[...])` — e.g. tighten the MSE threshold after observing an unexpected result. The
+operator then runs until both the original and the new goal are met. See
+[Goals & convergence](/guides/goals-and-convergence#runtime-goal-proposals).
+
+## Run it
+
+```bash
+export OPENROUTER_API_KEY="sk-or-..."
+pip install langgraph langchain-openai
+python examples/09-langgraph-policy.py
+```
+
+## Next
+
+<CardGroup cols={2}>
+  <Card title="LLM policies" icon="robot" href="/guides/llm-policies">
+    The general LLM-as-policy pattern.
+  </Card>
+  <Card title="MCP server" icon="plug" href="/integrations/mcp-server">
+    Expose operator actions over MCP.
+  </Card>
+</CardGroup>

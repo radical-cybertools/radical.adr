@@ -1,0 +1,92 @@
+---
+title: "State & Snapshots"
+description: "The five state namespaces, what persists, and the frozen Snapshot."
+---
+
+An operator's state is partitioned into namespaces with different lifetimes. Each cycle the operator
+hands `@observe` a frozen `Snapshot` — a read-only view that is safe to log, serialize, or pass
+across coroutines.
+
+## State namespaces
+
+| Namespace | Contents | Lifetime |
+|-----------|----------|----------|
+| `observations` | Task results (`result.{uid}`), task errors (`error.{uid}`), mirrored child observations | **Cleared each cycle** |
+| `runtime` | UID → `PENDING` / `RUNNING` / `DONE` / `FAILED` / `CANCELED` | Persists |
+| `objectives` | Annotated operator attrs, policy params, mirrored child runtime/objectives | Persists |
+| `artifacts` | Stable identifiers, file paths | Persists |
+| `directives` | Instructions from a parent | **Cleared each cycle** |
+| `task_context` | `uid → {name, kwargs}`, plus `action_id` with tracking enabled, for every spawned task | Persists |
+
+The operator also holds runtime-only handles — the live task Futures it is tracking and a bounded
+history of recent snapshots. These are **not** part of the serializable `Snapshot`.
+
+## Transparent state proxying
+
+Annotated operator attributes are proxied to `objectives`:
+
+```python
+self.radius = 2.5        # writes state.objectives["radius"]
+snapshot.objectives["radius"]   # → 2.5, next cycle
+```
+
+No serialization step, no manual sync. This is why the [quickstart](/get-started/quickstart) can
+read `op.radius` after a run and also see it inside `@observe`.
+
+## The Snapshot
+
+`Snapshot` is a frozen Pydantic model. Inside `@observe` you read from it; you never mutate it.
+Mutations happen only through actions (`UPDATE_PARAM`) or attribute writes between cycles.
+
+```python
+@observe
+def extract(self, snapshot) -> dict:
+    return {"cycle":  snapshot.cycle,
+            "radius": snapshot.objectives.get("radius", 5.0),
+            "results": [v for k, v in snapshot.observations.items()
+                        if k.startswith("result.")]}
+```
+
+## Task errors
+
+When a task fails, the failure is structured and visible to `@observe`:
+
+```python
+snapshot.observations["error.{uid}"] == {
+    "task_name": str,
+    "message":   str,
+    "type":      str,   # exception class name
+}
+```
+
+An error-aware `@observe` can surface them for the policy to react to:
+
+```python
+@observe
+def extract(self, snapshot) -> dict:
+    errors = {uid.removeprefix("error."): info
+              for uid, info in snapshot.observations.items()
+              if uid.startswith("error.")}
+    return {..., "errors": errors}
+```
+
+## Child state propagation
+
+When a child reports back, its state mirrors into the parent's. The child's **per-cycle**
+observations mirror into the parent's per-cycle `observations`; its **persistent** runtime statuses
+and objectives mirror into the parent's persistent `objectives` (latest-wins), so the latest child
+metrics survive across parent cycles.
+
+You don't read these mirrored values directly — a [`ChildHandle`](/guides/hierarchical-operators)
+reads them for you (`obs["explorer"].radius`, `obs["explorer"].done`).
+
+## Next
+
+<CardGroup cols={2}>
+  <Card title="The cycle" icon="arrows-rotate" href="/concepts/the-cycle">
+    When each namespace is read, written, and cleared.
+  </Card>
+  <Card title="Record & replay" icon="film" href="/guides/record-and-replay">
+    Snapshots and obs are serializable — capture and replay them.
+  </Card>
+</CardGroup>

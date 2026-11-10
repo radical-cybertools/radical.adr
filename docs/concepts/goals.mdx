@@ -1,0 +1,118 @@
+---
+title: "Goals"
+description: "The single convergence/constraint abstraction — when an operator stops itself."
+---
+
+A `Goal` is the only abstraction ADR uses for stopping. The operator evaluates all active goals
+every cycle and stops *autonomously* when **all** of them are satisfied — no counter expiry, no
+human signal, no external monitor.
+
+## The Goal
+
+```python
+Goal(name="mse",        metric="model_mse",   threshold=0.005, direction="minimize")
+Goal(name="gap",        metric="band_gap_ev", threshold=1.5,   direction="maximize")
+Goal(name="cpu_health", metric="cpu_percent", threshold=90.0,  direction="minimize")
+```
+
+| Field | Meaning |
+|---|---|
+| `name` | Identity. A runtime goal with the same `name` upserts in place. |
+| `metric` | The key looked up in the observation dict. |
+| `threshold` | The boundary value. |
+| `direction` | `"minimize"` → satisfied when `value < threshold`; `"maximize"` → `value > threshold`. |
+| `inclusive` | `True` flips to `<=` / `>=` so a discrete goal like "reach 5 hits" fires at exactly 5. Defaults to `False` (strict). |
+| `for_cycles` | Debounce: the goal must hold for N **consecutive** cycles to count as met. Defaults to `1`. |
+
+## How satisfaction is checked
+
+`satisfied(obs, snapshot)` looks up the metric in this order:
+
+1. `obs[metric]` — primary: what `@observe` explicitly returned.
+2. `snapshot.objectives[metric]` — fallback: operator state (e.g. `radius`, `center`).
+
+<Note>
+**`snapshot.runtime` is never checked automatically.** Resource or telemetry metrics must be
+surfaced explicitly in `@observe`. If a metric is found in neither place, the goal returns `False`
+and warns once. This is the rule behind [resource-aware steering](/guides/resource-aware-steering).
+</Note>
+
+## Source-agnostic by design
+
+`Goal` does not care where a metric comes from — a task result, operator state, a GPU-utilization
+subscription. That is determined entirely by what `@observe` puts into `obs`. The same `Goal` type
+expresses a scientific convergence criterion and a hardware constraint side by side.
+
+## Multi-goal AND convergence
+
+There is no special multi-objective API — just more entries in the list. The operator does not stop
+until **every** goal is satisfied simultaneously:
+
+```python
+@goals
+def criteria(self):
+    return [
+        Goal(name="hits_found",   metric="n_hits",        threshold=5,    direction="maximize"),
+        Goal(name="under_budget", metric="compute_hours", threshold=200,  direction="minimize"),
+        Goal(name="cpu_healthy",  metric="cpu_percent",   threshold=90.0, direction="minimize"),
+    ]
+```
+
+## OR / any-of convergence: `AnyGoal` and `AllGoal`
+
+A bare `Goal` or a list is implicit **AND**. To stop on the *first* of several alternatives — "stop
+when converged **OR** the budget is exhausted" — wrap them in `AnyGoal`. `AllGoal` is explicit AND;
+both are nestable, so arbitrary AND/OR convergence trees are expressible.
+
+```python
+from radical.adr import AnyGoal, AllGoal, Goal
+
+@goals
+def criteria(self):
+    return AnyGoal([
+        Goal(name="converged",  metric="radius",        threshold=0.005, direction="minimize"),
+        Goal(name="budget_out", metric="compute_hours", threshold=200,   direction="maximize"),
+    ])
+```
+
+Before `AnyGoal`, OR convergence required a manual `stop()` in the policy; now the operator can
+self-stop on richer conditions. A plain `Goal`/list behaves exactly as before — this is purely
+additive.
+
+## Debounce with `for_cycles`
+
+`Goal(..., for_cycles=N)` requires the goal to hold for N consecutive cycles before it counts as met,
+so a single-cycle fluke (noisy metric crossing the threshold once) doesn't stop the run:
+
+```python
+Goal(name="converged", metric="radius", threshold=0.005,
+     direction="minimize", for_cycles=3)     # stop only after 3 cycles below 0.005
+```
+
+`satisfied()` itself stays instantaneous; the consecutive-cycle streak is tracked by the operator's
+goal-check loop (a miss resets it to zero).
+
+## Static vs runtime goals
+
+- **Static goals** are returned by `@goals` at class level.
+- **Runtime goals** are proposed by a policy via `Decision(goals=[...])`. Same `name` upserts;
+  a new `name` adds an independent requirement; `Decision(remove_goals=["name"])` removes one.
+
+Both kinds are evaluated together every cycle. The convergence check fires after DECIDE:
+
+```python
+all_goals = static_goals + runtime_goals
+if all_goals and all(g.satisfied(obs, snapshot) for g in all_goals):
+    decision.stop = True
+```
+
+## Next
+
+<CardGroup cols={2}>
+  <Card title="Goals & convergence (guide)" icon="bullseye" href="/guides/goals-and-convergence">
+    Multi-goal AND, runtime proposals, inclusive thresholds.
+  </Card>
+  <Card title="Resource-aware steering" icon="microchip" href="/guides/resource-aware-steering">
+    One `Goal` type for science and hardware alike.
+  </Card>
+</CardGroup>

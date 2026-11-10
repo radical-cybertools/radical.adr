@@ -1,0 +1,182 @@
+---
+title: "Quickstart: Adaptive Search"
+description: "Build an operator that converges on the minimum of a noisy function."
+---
+
+We'll build an operator that searches for the minimum of a noisy function
+`f(x) = (x − π)² + noise` by shrinking a search window around the best point found each cycle.
+It stops on its own when the window is small enough — not when a counter runs out.
+
+This is the runnable [`examples/01-asyncflow-adaptive-search.py`](https://github.com/radical-cybertools/radical.adr/blob/main/examples/01-asyncflow-adaptive-search.py).
+
+## 1. Define the operator
+
+```python
+import asyncio
+import random
+from concurrent.futures import ThreadPoolExecutor
+
+from radical.asyncflow import LocalExecutionBackend, WorkflowEngine
+from radical.adr import Decision, Operator, Policy, decide, goals, observe, act
+from radical.adr.goals import Goal
+
+TARGET     = 3.14159
+MIN_RADIUS = 0.005
+
+
+# ── Module-level task implementation ─────────────────────────────────────────
+# Must be async, must NOT take self — a pure function AsyncFlow can dispatch.
+
+async def _evaluate_impl(x: float, seed: int = 0) -> dict:
+    rng = random.Random(seed)
+    return {"x": x, "value": (x - TARGET) ** 2 + rng.gauss(0, 0.03)}
+
+
+class SearchOperator(Operator):
+
+    # Annotated class attributes become persistent objectives, visible every
+    # cycle via snapshot.objectives and readable/writable as self.center etc.
+    center:  float = 0.0   # current search center
+    radius:  float = 5.0   # current search half-width
+    history: list  = []    # all results seen so far
+
+    # The operator stops automatically when ALL goals are satisfied.
+    @goals
+    def convergence_criteria(self):
+        return Goal(
+            name="converged", metric="radius",
+            threshold=MIN_RADIUS, direction="minimize",
+        )
+
+    # @act runs in the operator's event loop with self available. Returning
+    # engine.function_task(fn)(...) dispatches to AsyncFlow and returns a Future.
+    @act
+    async def evaluate(self, x: float, seed: int = 0):
+        return self.engine.function_task(_evaluate_impl)(x=x, seed=seed)
+
+    # @observe runs once per cycle with a frozen Snapshot; returns a plain dict
+    # the policy reasons over.
+    @observe
+    def extract(self, snapshot) -> dict:
+        new_results = [
+            v for k, v in snapshot.observations.items()
+            if k.startswith("result.") and isinstance(v, dict) and "x" in v
+        ]
+        history = list(snapshot.objectives.get("history", [])) + new_results
+        best    = min(history, key=lambda r: r["value"]) if history else None
+        return {
+            "new_results": new_results,
+            "history":     history,
+            "center":      snapshot.objectives.get("center", 0.0),
+            "radius":      snapshot.objectives.get("radius", 5.0),
+            "best":        best,
+            "cycle":       snapshot.cycle,
+        }
+```
+
+<Note>
+**Module-level impls must not take `self`.** They are pure functions dispatched by AsyncFlow to a
+backend executor — only the kwargs you pass reach them. Anything that needs `self` (e.g.
+`self.engine`) belongs in the `@act` method body, not the impl. See
+[Decorators](/concepts/decorators).
+</Note>
+
+## 2. Write the policy
+
+```python
+class SearchPolicy(Policy):
+
+    def __init__(self, op: SearchOperator) -> None:
+        super().__init__()
+        self._act = op.get_actions()   # ActionSet: one callable per @act
+
+    @decide
+    async def run(self, obs: dict) -> Decision:
+        # Safety stop — the goal will usually stop us earlier, once radius converges.
+        if obs["cycle"] >= 15:
+            return Decision(stop=True)
+
+        if obs["best"] is not None:
+            # Shrink the window around the best point found so far.
+            new_c, new_r = obs["best"]["x"], obs["radius"] * 0.5
+            return Decision(actions=[
+                self._act.update_param("history", obs["history"]),
+                self._act.update_param("center",  new_c),
+                self._act.update_param("radius",  new_r),
+                *[self._act.evaluate(x=new_c + new_r*(2*i/3-1), seed=obs["cycle"]*4+i)
+                  for i in range(4)],
+            ])
+
+        # First cycle: seed the search.
+        return Decision(actions=[
+            self._act.evaluate(x=obs["center"] + obs["radius"]*(2*i/3-1),
+                               seed=obs["cycle"]*4+i)
+            for i in range(4)
+        ])
+```
+
+## 3. Wire it together and run
+
+```python
+async def main():
+    backend = await LocalExecutionBackend(ThreadPoolExecutor())
+    engine  = await WorkflowEngine.create(backend)
+
+    op        = SearchOperator(engine)
+    op.policy = SearchPolicy(op)
+
+    # op.run() is an async generator — one Snapshot per cycle.
+    async for snapshot in op.run():
+        print(f"cycle {snapshot.cycle:2d}  "
+              f"center={op.center:+.6f}  radius={op.radius:.6f}")
+
+    best = min(op.history, key=lambda r: r["value"])
+    print(f"\nbest x={best['x']:.6f}  error={abs(best['x'] - TARGET):.6f}")
+    await engine.shutdown()
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+## Run it
+
+```bash
+python examples/01-asyncflow-adaptive-search.py
+```
+
+Expected output (exact values vary due to noise):
+
+```
+cycle  0  center=+0.000000  radius=5.000000
+cycle  1  center=+0.035679  radius=2.500000
+cycle  2  center=+2.912374  radius=1.250000
+cycle  3  center=+3.109482  radius=0.625000
+...
+cycle 11  center=+3.141563  radius=0.003906
+
+best x=3.141591  error=0.000032
+```
+
+The operator stops at cycle 11 — not because a counter expired, but because the `radius` goal
+`(< 0.005)` was satisfied. Change the threshold in `Goal` to change when it stops.
+
+## What just happened
+
+- **OBSERVE** assembled `obs` from the previous cycle's task results.
+- **DECIDE** shrank the window and emitted four `evaluate` actions.
+- **ACT** dispatched them to AsyncFlow; results arrive in the *next* cycle's inbox.
+- After DECIDE, ADR checked the `radius` goal and forced `stop=True` once it was met.
+
+See [The cycle](/concepts/the-cycle) for the full Observe → Decide → Act mechanics.
+
+## Next
+
+<CardGroup cols={2}>
+  <Card title="Goals & convergence" icon="bullseye" href="/guides/goals-and-convergence">
+    Multi-goal AND, runtime goal proposals, inclusive thresholds.
+  </Card>
+  <Card title="Policies" icon="diagram-project" href="/concepts/policies">
+    Composition, fallback, timeout — and swapping in an LLM.
+  </Card>
+</CardGroup>

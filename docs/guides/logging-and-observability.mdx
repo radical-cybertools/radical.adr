@@ -1,0 +1,133 @@
+---
+title: "Logging & Observability"
+description: "See what an operator is doing — observers, JSONL events, dashboards, and stdlib logging."
+---
+
+There are two complementary ways to see inside a running operator: **observers**, the structured,
+cycle-by-cycle event stream meant for tooling and replay; and Python's **standard `logging`**, used
+sparingly for anomalies. They serve different purposes — keep them separate.
+
+## Observers — the structured channel
+
+An observer receives the operator's lifecycle as it happens. The protocol has three synchronous
+hooks:
+
+```python
+class ObserverBase(Protocol):
+    def on_start(self, operator_id: str, metadata: dict) -> None: ...
+    def on_cycle(self, snapshot: Snapshot, obs: dict, decision: Decision) -> None: ...
+    def on_stop(self, final: Snapshot | None, reason: str) -> None: ...
+```
+
+`on_cycle` receives the `Snapshot`, the `obs` dict the policy actually reasoned over, **and** the
+resulting `Decision` — everything you need to reconstruct a cycle. Attach one at construction:
+
+```python
+op = MyOperator(engine, observer=MyObserver())
+```
+
+<Note>
+**Observers are a side channel.** They observe; they never feed back into `state`, `snapshot`, or
+`@observe`. Use them for tracing, metrics, and recording — never to influence a decision.
+</Note>
+
+## JSONL events and dashboards
+
+A `JsonlObserver` (see the `examples/demo/` campaigns) emits one JSON line per lifecycle event:
+
+| Event | When |
+|-------|------|
+| `operator_start` | Before the first cycle |
+| `cycle_start` / `decision` | Each cycle |
+| `task_spawn` / `task_complete` / `task_failed` / `task_cancelled` | Task lifecycle |
+| `goal_add` / `goal_update` / `goal_remove` / `goals_satisfied` | Goal changes |
+| `operator_stop` | After the final cycle |
+
+The resulting trace drives the HTML replay dashboards in `examples/demo/` —
+`demo-visualization.html` (force-directed graph) and `demo-visualization-timeline.html` (Gantt).
+
+## RecordingObserver — for offline policy A/B
+
+`RecordingObserver` is the in-package observer that captures the per-cycle `obs` so you can replay a
+*different* policy against it offline. It has its own guide:
+[Record & replay](/guides/record-and-replay).
+
+## Standard logging — narrate the cycle
+
+ADR uses Python's stdlib `logging` with per-module loggers under the **`radical.adr`** namespace
+(`log = logging.getLogger(__name__)`). One call sets it up:
+
+```python
+import logging
+from radical.adr import enable_logging
+
+enable_logging(logging.INFO)    # follow the cycle; use logging.DEBUG for per-action detail
+```
+
+```text
+2026-06-25 20:25:20 | INFO     | [radical.adr.operator] | operator 'Op' starting (max_cycles=None)
+2026-06-25 20:25:21 | INFO     | [radical.adr.operator] | cycle 0: decision — 1 actions, 0 goal proposals, stop=False
+2026-06-25 20:25:21 | INFO     | [radical.adr.operator] | cycle 3: all 1 goals satisfied -> stopping
+2026-06-25 20:25:21 | INFO     | [radical.adr.operator] | operator 'Op' stopped after 4 cycles (reason=stop)
+```
+
+### What each level shows
+
+| Level | What you get |
+|---|---|
+| **INFO** | Lifecycle milestones — operator start, a one-line **decision summary per cycle** (actions / goal proposals / stop), goal-satisfied stop, child spawn / restart / cancel, final stop with reason. |
+| **DEBUG** | Per-message / per-action detail — inbox drains, observation key counts, each action applied, each task spawn, and task settle events (`uid -> DONE/FAILED/CANCELED`). |
+| **WARNING / exception** | Anomalies only — idempotent `spawn_operator` / `cancel_operator` no-ops, a composed policy's primary timing out or raising, and MCP tool failures. |
+
+### Options
+
+```python
+enable_logging(
+    logging.DEBUG,
+    output_file="run.log",       # also log to a file (ANSI colors stripped)
+    use_colors=True,             # color the level name on a TTY console
+    show_details=False,          # add process/thread info per line
+    configure_stack=False,       # see below
+)
+```
+
+### Compatible with AsyncFlow and RHAPSODY
+
+ADR's format string is the **same pipe-delimited line** AsyncFlow and RHAPSODY use, so all three
+projects' logs interleave uniformly and stay filterable by namespace (`radical.adr`,
+`radical.asyncflow`, `rhapsody`). Like RHAPSODY, ADR configures its own namespace logger with
+`propagate=False`, so its lines are never duplicated and survive a sibling reconfiguring the root
+logger.
+
+Pass `configure_stack=True` to configure the **whole stack** at one level in a single call:
+
+```python
+enable_logging(logging.INFO, configure_stack=True)   # ADR + AsyncFlow + (if installed) RHAPSODY
+```
+
+<Note>
+Logging is a **side channel** — it never flows through `state`, `snapshot`, or `@observe`, and is
+independent of the Observer channel. For structured, machine-readable per-cycle data (recording,
+dashboards, offline replay), use an observer — that is the channel designed for it.
+</Note>
+
+## Choosing a channel
+
+| You want… | Use |
+|---|---|
+| Human-readable narration of the cycle | stdlib `logging` via `enable_logging(...)` |
+| Per-cycle decisions, tasks, goals — structured | An **observer** (`on_cycle`) |
+| A visual timeline / graph of a run | `JsonlObserver` + the demo dashboards |
+| Offline A/B of policies on a recorded run | `RecordingObserver` + [`replay_trace`](/guides/record-and-replay) |
+| A heads-up when something anomalous happens | `logging` at `WARNING` |
+
+## Next
+
+<CardGroup cols={2}>
+  <Card title="Record & replay" icon="film" href="/guides/record-and-replay">
+    Capture and replay observation traces.
+  </Card>
+  <Card title="State & Snapshots" icon="database" href="/concepts/state-and-snapshots">
+    What an observer sees each cycle.
+  </Card>
+</CardGroup>

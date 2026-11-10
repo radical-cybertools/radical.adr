@@ -1,0 +1,110 @@
+---
+title: "Goals & Convergence"
+description: "Stop on several conditions at once — science AND budget AND resources."
+---
+
+A real campaign rarely stops on one number. You want it to stop when the science has converged *and*
+you are under budget *and* the cluster is healthy. ADR expresses all of that as a list of `Goal`s —
+there is no special multi-objective API.
+
+For the underlying semantics see the [Goals concept](/concepts/goals). This guide is the task
+recipe.
+
+## Multiple static goals (AND)
+
+Return a list from `@goals`. The operator stops only when **all** are satisfied simultaneously:
+
+```python
+@goals
+def criteria(self):
+    return [
+        Goal(name="hits_found",   metric="n_hits",        threshold=5,    direction="maximize"),
+        Goal(name="under_budget", metric="compute_hours", threshold=200,  direction="minimize"),
+        Goal(name="cpu_healthy",  metric="cpu_percent",   threshold=90.0, direction="minimize"),
+    ]
+```
+
+Every metric here must be present in the dict your `@observe` returns — `n_hits`, `compute_hours`,
+and `cpu_percent`. A goal whose metric is missing returns `False` (and warns once), so the operator
+simply keeps running.
+
+## Inclusive thresholds for discrete goals
+
+Strict `<` / `>` is wrong for "reach exactly 5 hits" — `n_hits > 5` requires 6. Use `inclusive=True`:
+
+```python
+Goal(name="hits_found", metric="n_hits", threshold=5,
+     direction="maximize", inclusive=True)   # fires at exactly 5
+```
+
+## OR convergence with `AnyGoal`
+
+A list is AND. To stop on the *first* of several alternatives, wrap them in `AnyGoal` (nestable with
+`AllGoal` for mixed trees):
+
+```python
+from radical.adr import AnyGoal, Goal
+
+@goals
+def criteria(self):
+    return AnyGoal([
+        Goal(name="converged",  metric="radius",        threshold=0.005, direction="minimize"),
+        Goal(name="budget_out", metric="compute_hours", threshold=200,   direction="maximize"),
+    ])
+```
+
+## Debounce noisy metrics with `for_cycles`
+
+Require a goal to hold for N consecutive cycles so a one-cycle fluke doesn't stop the run:
+
+```python
+Goal(name="converged", metric="radius", threshold=0.005,
+     direction="minimize", for_cycles=3)
+```
+
+## Runtime goal proposals
+
+A policy can add or tighten goals mid-campaign via the `Decision`:
+
+```python
+@decide
+async def run(self, obs):
+    actions = [...]
+    if obs.get("surprising_property"):
+        # add a new requirement discovered at runtime
+        return Decision(actions=actions,
+                        goals=[Goal(name="band_gap", metric="band_gap_ev",
+                                    threshold=1.5, direction="maximize")])
+    return Decision(actions=actions)
+```
+
+- Same `name` → **upserts** in place (tighten or relax a threshold).
+- New `name` → adds an **independent** requirement that must also be met.
+- `Decision(remove_goals=["band_gap"])` removes one.
+
+Runtime goals are evaluated together with the static ones every cycle.
+
+## When the check fires
+
+The convergence check runs **after DECIDE, before ACT**. The stopping cycle's actions still apply —
+stopping does not discard the final batch. See [The cycle](/concepts/the-cycle#decide-choose-actions-then-check-goals).
+
+## Run it
+
+A working two-goal version (scientific convergence + a CPU resource constraint) ships as
+[`examples/10-resource-aware-search.py`](https://github.com/radical-cybertools/radical.adr/blob/main/examples/10-resource-aware-search.py):
+
+```bash
+python examples/10-resource-aware-search.py --local
+```
+
+## Next
+
+<CardGroup cols={2}>
+  <Card title="Resource-aware steering" icon="microchip" href="/guides/resource-aware-steering">
+    Where resource metrics come from.
+  </Card>
+  <Card title="LLM policies" icon="robot" href="/guides/llm-policies">
+    Let a model propose new goals at runtime.
+  </Card>
+</CardGroup>

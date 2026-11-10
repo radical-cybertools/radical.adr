@@ -1,0 +1,90 @@
+---
+title: "API · Boundaries"
+description: "Tunable (adaptation boundary) and Budget (resource/deadline stop)."
+---
+
+Imported from `radical.adr`. Two small, domain-agnostic value types that let an operator declare
+*limits* on the autonomous loop. Both are additive and opt-in — an operator that declares neither
+behaves exactly as before.
+
+## `Tunable`
+
+```python
+Tunable(default, low, high, *, int=False, step=None)
+```
+
+A bounded parameter an agent may adapt — the **adaptation boundary**. Declared as an operator class
+attribute:
+
+```python
+class Run(Operator):
+    learning_rate = Tunable(3e-4, 1e-5, 1e-3)
+    grad_steps    = Tunable(25_000, 2_000, 100_000, int=True)
+    discount      = 0.99          # plain attr → frozen; the agent cannot write it
+```
+
+| Field | Type | Meaning |
+|---|---|---|
+| `default` | `float` | Initial value (seeded into `state.objectives`); must be within bounds. |
+| `low`, `high` | `float` | Inclusive bounds. |
+| `int` | `bool` | If `True`, only integer-valued numbers are accepted (`256.0` is fine, `256.7` is rejected — no silent rounding). |
+| `step` | `float \| None` | If set, accepted values must lie on the grid `low + k*step`. |
+
+One declaration is the single source of truth. From it, ADR:
+
+1. **seeds** `state.objectives` with the scalar `default`;
+2. **validates** every agent `update_param` at the `UPDATE_PARAM` apply seam — an out-of-bounds /
+   non-`int` / off-`step` value, or a write to a non-`Tunable` key (once any boundary is declared), is
+   **rejected, never silently clamped or dropped**. The requested value is never altered; the refusal
+   is surfaced as evidence (`snapshot.rejections` / `self.rejections`) so the agent re-decides. The
+   rejection is soft — it never raises or aborts the cycle;
+3. **observes** — `self.tunables` returns the current `{name: value}`;
+4. **renders** the bounds into the agent tool schema (`get_schema(...)` enriches `update_param`).
+
+<Note>
+Operator-internal writes (`self.learning_rate = v`, `@observe` folds, construction config) bypass the
+boundary — only agent `UPDATE_PARAM` actions are validated. The boundary governs the *agent's*
+authority, not your own setup code.
+</Note>
+
+### `validate(value) -> (accepted, reason)`
+
+Returns `(accepted_value, None)` if legal, else `(None, reason)` where `reason` is one of
+`"not_a_number"`, `"out_of_bounds"`, `"not_integer"`, `"off_step"`. Accepted values are returned as
+`int` when `int=True`.
+
+## `Budget`
+
+```python
+Budget(metric, limit, direction="max")
+```
+
+A resource/deadline stop, passed to the operator and evaluated every cycle **independently of goal
+state**:
+
+```python
+op = Run(engine, budget=[Budget("trials", 12), Budget("usd_cost", 5.0)])
+```
+
+| Field | Type | Meaning |
+|---|---|---|
+| `metric` | `str` | Observed key to watch — read from the `@observe` dict, then `snapshot.objectives`. |
+| `limit` | `float` | Ceiling value. |
+| `direction` | `str` | `"max"` (default) stops when `value >= limit`; `"min"` stops when `value <= limit`. |
+
+A `Budget` is **not** a `Goal`. It is checked in the run loop beside `max_runtime`, outside goal
+checking — so no goal composition (including an unsatisfiable runtime goal an agent adds) can keep the
+run alive past its cap. It guarantees the run *terminates* when the resource is exhausted; it does not
+change what "converged" means, and it does not alter runtime-goal composition.
+
+<Warning>
+Do **not** express a compute/resource cap as a `Goal`. ADR AND-combines the static goal with any
+runtime goals, so a budget-as-goal can be blocked forever by an unsatisfiable agent-added goal and
+never fire. Use `Budget`.
+</Warning>
+
+## See also
+
+- [api-operator](/reference/api-operator) — `Operator(..., budget=…)`, `decide_when`, `tunables`,
+  `rejections`, `trend`, `stalled` · [api-goals](/reference/api-goals) — why a budget is not a Goal ·
+  [Resource-aware steering](/guides/resource-aware-steering)

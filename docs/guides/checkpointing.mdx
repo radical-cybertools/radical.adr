@@ -1,0 +1,75 @@
+---
+title: "Checkpointing & Resume"
+description: "Persist an operator's steering state so a preempted campaign can resume."
+---
+
+HPC jobs get preempted, walltime expires, nodes crash. A multi-hour ADR campaign shouldn't lose its
+progress when that happens. `save_checkpoint` / `load_checkpoint` persist the operator's **steering
+state** to JSON and restore it onto a fresh operator, so the Observe → Decide → Act loop picks up
+where it left off.
+
+## Save
+
+```python
+op.save_checkpoint("campaign.ckpt.json")     # periodically, or on SIGTERM
+```
+
+It serializes exactly the state ADR owns:
+
+| Persisted | Why |
+|---|---|
+| `cycle` | resume the loop counter |
+| `objectives` | operator state (e.g. `radius`, `center`, `history`) |
+| `runtime` | per-task statuses |
+| `artifacts` | output paths / identifiers |
+| `task_context` | `uid → {name, kwargs}` — enables `retry_task` after resume |
+| runtime goals | policy-proposed goals (incl. `AnyGoal`/`AllGoal` trees) |
+| goal streaks | `for_cycles` debounce counters |
+| child lifecycle metadata | which children were started, and their initial config |
+
+## Resume
+
+```python
+op = SearchOperator(engine)          # fresh operator + a new engine
+op.load_checkpoint("campaign.ckpt.json")
+async for snapshot in op.run():       # resumes from the saved cycle
+    ...
+```
+
+## What is *not* persisted — and why
+
+<Note>
+**Live execution is never snapshotted.** Task `Future`s belong to AsyncFlow / RHAPSODY, on the far
+side of the [sacred boundary](/get-started/mental-model#the-sacred-boundary) — ADR doesn't own them,
+so it doesn't try to freeze them. A checkpoint captures *decisions and goals*, not running HPC work.
+</Note>
+
+Any task that was in flight (`PENDING`/`RUNNING`) at save time is recorded as **`LOST`** in
+`runtime`. After resume, your `@observe` can surface those and the policy can re-dispatch them with
+[`retry_task`](/concepts/built-in-actions#retry-task) (the original kwargs are in `task_context`):
+
+```python
+@observe
+def extract(self, snapshot) -> dict:
+    lost = [uid for uid, st in snapshot.runtime.items() if st == "LOST"]
+    return {..., "lost": lost}
+
+@decide
+async def run(self, obs):
+    return Decision(actions=[self._act.retry_task(uid) for uid in obs["lost"]])
+```
+
+**Child operators:** re-declare them with `add_child` in your operator's constructor as usual — their
+lifecycle metadata is restored on top, but the child *instances* are reconstructed by your code, not
+deserialized.
+
+## Next
+
+<CardGroup cols={2}>
+  <Card title="Built-in actions" icon="list-check" href="/concepts/built-in-actions">
+    `retry_task` and the rest of the action set.
+  </Card>
+  <Card title="Design invariants" icon="scale-balanced" href="/reference/design-invariants">
+    What ADR persists vs. what the layers below own.
+  </Card>
+</CardGroup>

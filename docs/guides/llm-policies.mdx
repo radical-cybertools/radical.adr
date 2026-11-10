@@ -1,0 +1,101 @@
+---
+title: "LLM Policies"
+description: "Swap the decision logic for an LLM — same Policy shape, no hidden hooks."
+---
+
+Because decision logic is isolated in the [`Policy`](/concepts/policies), you can replace a rule
+policy with an LLM without touching the operator, its state, its acts, or its goals. The LLM call is
+**inline in `@decide`** — there are no hidden hooks, and the operator still owns goals and stopping.
+
+## The shape
+
+`LLMPolicy` is a thin `Policy` subclass. Subclass it, add `@decide`, call your model:
+
+```python
+from radical.adr import LLMPolicy, decide, Decision
+
+class OpenRouterPolicy(LLMPolicy):
+    def __init__(self, api_key: str):
+        super().__init__()
+        self._client = instructor.from_openai(AsyncOpenAI(
+            api_key=api_key, base_url="https://openrouter.ai/api/v1"))
+        self._act = None   # set from the operator
+
+    @decide
+    async def run(self, obs: dict) -> Decision:
+        prompt = self.render_observation(obs)          # default: JSON dump of obs
+        resp   = await self._client.chat.completions.create(
+            model=MODEL, response_model=SearchMove,
+            messages=[{"role": "system", "content": SYSTEM_PROMPT},
+                      {"role": "user",   "content": prompt}])
+        self.record_usage(tokens=...)                  # local bookkeeping only
+        return Decision(actions=[
+            self._act.update_param("center", resp.center),
+            self._act.update_param("radius", resp.radius),
+            *[self._act.evaluate(x=p) for p in resp.points],
+        ])
+```
+
+**Runnable example:** [`examples/03-asyncflow-llm-adaptive-search.py`](https://github.com/radical-cybertools/radical.adr/blob/main/examples/03-asyncflow-llm-adaptive-search.py)
+
+```bash
+export OPENROUTER_API_KEY="sk-or-..."
+python examples/03-asyncflow-llm-adaptive-search.py
+```
+
+## The operator still owns stopping
+
+This is the key property: the LLM proposes *moves*, but the operator's `@goals` decide *when to
+stop*. The model cannot run forever — convergence is enforced by ADR, not by the prompt. The LLM can
+even propose *new* goals at runtime via `Decision(goals=[...])` (see
+[Goals & convergence](/guides/goals-and-convergence#runtime-goal-proposals)).
+
+## Tool schemas for free
+
+`op.get_actions("openai")` / `"anthropic"` / `"langgraph"` renders every `@act` signature and
+docstring as vendor tool-call schemas — so the model is offered exactly the operator's real
+capabilities, no hand-maintained schema:
+
+```python
+tools = op.get_actions().get_schema("openai")
+```
+
+The schema also exposes an optional `depends_on` parameter on every spawnable tool (so the model can
+express task DAG dependencies) and the child-operator lifecycle verbs
+(`spawn_operator`/`restart_operator`/`cancel_operator`) plus `retry_task` — the LLM can drive ADR's
+full action surface, not just flat `@act` calls.
+
+## Reliability: compose with a fallback
+
+A model call can fail, time out, or return garbage. Compose the LLM with a deterministic fallback so
+the loop never stalls:
+
+```python
+op.policy = Policy(primary=OpenRouterPolicy(key),
+                   fallback=SearchPolicy(op),
+                   timeout=30.0)
+```
+
+The fallback fires on raise, `None`, **or** a hang past `timeout`. Example
+[`04-protein-design.py`](https://github.com/radical-cybertools/radical.adr/blob/main/examples/04-protein-design.py)
+shows `Policy(primary=MockLLMPolicy(), fallback=ProteinDesignPolicy(op))`.
+
+## Usage bookkeeping
+
+`record_usage(tokens=, latency=, cost=)` appends to a bounded `usage_history`.
+
+<Note>
+Usage data is **purely local** to the policy — it never flows through `state`, `snapshot`, or
+`@observe`, so it cannot leak into decisions or recorded traces.
+</Note>
+
+## Next
+
+<CardGroup cols={2}>
+  <Card title="LangGraph integration" icon="diagram-project" href="/integrations/langgraph">
+    Use a LangGraph agent as the policy.
+  </Card>
+  <Card title="MCP server" icon="plug" href="/integrations/mcp-server">
+    Expose an operator's actions over MCP.
+  </Card>
+</CardGroup>

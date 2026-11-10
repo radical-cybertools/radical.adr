@@ -1,0 +1,136 @@
+---
+title: "API · State, Messaging & Observers"
+description: "RuntimeState, Snapshot, message types, and the observer/recording API."
+---
+
+Imported from `radical.adr`. See [State & Snapshots](/concepts/state-and-snapshots) and
+[Record & replay](/guides/record-and-replay) for the overviews.
+
+## `Snapshot`
+
+A frozen Pydantic model handed to `@observe` each cycle. Safe to log, serialize, or pass across
+coroutines.
+
+| Field | Lifetime | Contents |
+|---|---|---|
+| `observations` | cleared each cycle | `result.{uid}`, `error.{uid}`, mirrored child observations |
+| `runtime` | persists | `uid → PENDING/RUNNING/DONE/FAILED/CANCELED` |
+| `objectives` | persists | annotated attrs, policy params, mirrored child state |
+| `artifacts` | persists | stable ids, file paths |
+| `directives` | cleared each cycle | instructions from a parent |
+| `task_context` | persists | `uid → {name, kwargs}`, plus `action_id` when tracking is enabled |
+| `cycle` | — | current cycle index |
+
+**Task error shape** — `observations["error.{uid}"]` is `{"task_name": str, "message": str, "type": str}`.
+
+With `track_action_ids=True`, `task_context[uid]["action_id"]` identifies the
+emitted action that launched the tracked work. Links cover the Future or local
+result returned by an `@act`, and child-operator launches/restarts; they do not
+identify backend subtasks hidden inside an action.
+
+A returned Future is keyed by its backend uid: `future.uid` (AsyncFlow's full uid,
+e.g. `task.000001`) when set, else `future.id`. With tracking enabled, local results
+and Futures with neither receive fresh UUID-based task UIDs. With tracking
+disabled, they keep the legacy object-address-based UIDs.
+
+Retries point to the new retry action, whose `target_uid` identifies the previous
+task. Context survives task completion and checkpointing. Older checkpoints and
+tasks created without tracking omit `action_id`, so readers
+should use `.get("action_id")`. Loading a checkpoint preserves saved links but
+does not enable tracking; pass the constructor option again to track new actions.
+
+### Read-only views
+
+| Property | Returns | Contents |
+|---|---|---|
+| `results` | `list` | This cycle's task-result payloads (`result.{uid}`), in completion-drain order. Deliberately **not** a semantic "latest" — several tasks can settle in one cycle. Under `decide_when="idle"` there is exactly one, so `results[0]` is unambiguous. |
+| `rejections` | `list` | This cycle's boundary rejections (`rejected_param.{name}`) — a refused `update_param` surfaced as evidence. See [api-boundary](/reference/api-boundary). |
+
+## `RuntimeState`
+
+The mutable backing store the operator owns. `Snapshot` is its frozen view. It also holds
+runtime-only handles not in the snapshot — the live task Futures it is tracking and a bounded history
+of recent snapshots. User code reads state through `Snapshot` and writes it through attribute
+assignment or `UPDATE_PARAM` — not directly.
+
+## Messaging
+
+The inbox is the only input channel.
+
+### `MessageKind`
+
+| Kind | Direction | Payload |
+|---|---|---|
+| `TASK_EVENT` | backend/local → operator | `{uid, state, result/error}` |
+| `SNAPSHOT` | child → parent | child `Snapshot` |
+| `DIRECTIVE` | parent → child | `{directives: dict}` |
+| `CUSTOM` | parent / MCP → operator | arbitrary; `{"mutation": Action \| Decision}` is applied with the cycle's decision |
+| `STOP` | system → operator | `None` |
+
+### `InboxMessage`
+
+The envelope placed on the inbox: `kind` (`MessageKind`), `sender_id`, `payload`.
+
+### `MessageBus`
+
+Routing helper for inter-operator messaging.
+
+## Observers
+
+### `ObserverBase`
+
+Protocol with three synchronous hooks:
+
+```python
+def on_start(self, operator_id: str, metadata: dict) -> None: ...
+def on_cycle(self, snapshot: Snapshot, obs: dict, decision: Decision) -> None: ...
+def on_stop(self, final: Snapshot | None, reason: str) -> None: ...
+```
+
+Attach via `Operator(..., observer=...)`. Observers are a side channel — they never feed back into
+state. See [Logging & observability](/guides/logging-and-observability).
+
+### `RecordingObserver`
+
+```python
+RecordingObserver(path)   # captures per-cycle obs (+ decision) to JSONL
+```
+
+### `replay_trace`
+
+```python
+decisions = await replay_trace(path, candidate_policy, operators=None)
+```
+
+Re-drives a different policy against a recorded `obs` sequence — offline, open-loop (reads only the
+recorded `obs`). `operators={name: OperatorClass}` (optional) back-fills `operator_cls` on
+`SPAWN_OPERATOR` decisions so hierarchical policies replay cleanly. See
+[Record & replay](/guides/record-and-replay).
+
+## Logging
+
+### `enable_logging`
+
+```python
+enable_logging(
+    level=logging.INFO,
+    *,
+    output_file=None,      # also write to this file (ANSI colors stripped)
+    file_level=None,       # defaults to `level`
+    use_colors=True,       # color the level name on a TTY console
+    show_details=False,    # add process/thread info per line
+    stream=None,           # default sys.stderr
+    configure_stack=False, # also configure AsyncFlow + RHAPSODY at the same level
+) -> logging.Logger
+```
+
+Configures the `radical.adr` namespace logger for user-facing INFO/DEBUG narration of the
+Observe → Decide → Act loop. Sets `propagate=False` so ADR logs are never duplicated and survive a
+sibling reconfiguring the root logger. Uses the same pipe-delimited format as AsyncFlow and RHAPSODY.
+See [Logging & observability](/guides/logging-and-observability). Logging is a side channel — it never
+flows through `state`, `snapshot`, or `@observe`.
+
+## See also
+
+- [api-operator](/reference/api-operator) · [errors](/reference/errors) ·
+  [design-invariants](/reference/design-invariants)

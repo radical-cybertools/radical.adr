@@ -1,0 +1,3 @@
+### RADICAL-ADR
+
+RADICAL Autonomous Decision Runtime (ADR) standardized, high-performance runtime for autonomous scientific decision-making. ADR autonomously and dynamically orchestrates agent-based systems—powered by large language models (LLMs), rule-based reasoning engines, or hybrid approaches—to establish objectives, evaluate conditions, make decisions, and execute actions within well-defined policy, governance, and safety constraints. The runtime continuously adapts to changing environments, enabling goal-driven, explainable, and reproducible scientific workflows.

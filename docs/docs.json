@@ -1,0 +1,96 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "theme": "mint",
+  "name": "radical.adl",
+  "colors": {
+    "primary": "#0ea5e9",
+    "light": "#38bdf8",
+    "dark": "#0369a1"
+  },
+  "navigation": {
+    "global": {
+      "anchors": [
+        {
+          "anchor": "GitHub",
+          "href": "https://github.com/radical-cybertools/radical.adl",
+          "icon": "github"
+        }
+      ]
+    },
+    "tabs": [
+      {
+        "tab": "Docs",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "index",
+              "get-started/installation",
+              "get-started/quickstart",
+              "get-started/mental-model"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/operator",
+              "concepts/the-cycle",
+              "concepts/decorators",
+              "concepts/state-and-snapshots",
+              "concepts/decisions-and-actions",
+              "concepts/built-in-actions",
+              "concepts/goals",
+              "concepts/policies"
+            ]
+          },
+          {
+            "group": "Guides",
+            "pages": [
+              "guides/adaptive-search",
+              "guides/goals-and-convergence",
+              "guides/hierarchical-operators",
+              "guides/multi-operator",
+              "guides/llm-policies",
+              "guides/record-and-replay",
+              "guides/resource-aware-steering",
+              "guides/checkpointing",
+              "guides/logging-and-observability"
+            ]
+          },
+          {
+            "group": "Integrations",
+            "pages": [
+              "integrations/asyncflow",
+              "integrations/langgraph",
+              "integrations/mcp-server"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Reference",
+        "groups": [
+          {
+            "group": "API",
+            "pages": [
+              "reference/api-operator",
+              "reference/api-policy",
+              "reference/api-decision",
+              "reference/api-goals",
+              "reference/api-boundary",
+              "reference/api-state",
+              "reference/errors"
+            ]
+          },
+          {
+            "group": "Appendix",
+            "pages": [
+              "reference/design-invariants",
+              "reference/changelog"
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

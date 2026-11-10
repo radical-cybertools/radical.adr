@@ -1,0 +1,102 @@
+---
+title: "Decisions & Actions"
+description: "What a policy returns each cycle: actions, goal proposals, stop, and delegation."
+---
+
+A policy's `@decide` method returns exactly one `Decision` per cycle. The `Decision` is a
+declarative description of everything the operator should do this cycle — it never executes anything
+itself.
+
+## The Decision object
+
+```python
+class Decision:
+    actions:      list[Action]          = []
+    goals:        list[Goal]            = []   # propose runtime goals
+    remove_goals: list[str]             = []   # remove runtime goals by name
+    stop:         bool                  = False
+    delegate_to:  list[str]             = []   # child IDs to send a DIRECTIVE
+    notify:       list[tuple[str, Any]] = []   # (child_id, payload)
+    directives:   dict[str, Any]        = {}   # payload for delegate_to
+```
+
+You construct actions through the [`ActionSet`](#the-actionset), not by hand.
+
+## ActionKind
+
+Each `Action` has a `kind`. There are seven:
+
+| Kind | Effect |
+|------|--------|
+| `SPAWN_TASK` | Look up the `@act` method, `await fn(self, *deps, **kwargs)`, route the return. |
+| `SPAWN_BLOCK` | Alias for `SPAWN_TASK` — identical lookup and execution path. |
+| `SPAWN_OPERATOR` | Register-or-reuse a child by name, then launch it as a block. **Idempotent**: a re-emit on an already-started child is a no-op + a logged warning. |
+| `RESTART_OPERATOR` | Re-run a registered child: cancel in-flight → reset to **initial** config → relaunch. Not idempotent. |
+| `CANCEL_OPERATOR` | Cancel the child's in-flight run, leaving a `CANCELED` tombstone. |
+| `CANCEL_TASK` | `future.cancel()` on a tracked task future. |
+| `RETRY_TASK` | Re-spawn a finished task from its recorded name + kwargs (a fresh uid). |
+| `UPDATE_PARAM` | `state.objectives[key] = value`. |
+
+## depends_on — DAG chaining without futures
+
+Every `Action` carries `depends_on: list[str]`, interpreted by kind:
+
+- For `SPAWN_TASK` / `SPAWN_BLOCK` — upstream task **UIDs**.
+- For `SPAWN_OPERATOR` / `RESTART_OPERATOR` — upstream child operator **names** (resolved
+  internally to their start-futures).
+
+Either way, the resolved futures **gate the launch** — native DAG chaining where the policy never
+touches a `Future` or a UID.
+
+```python
+acts.spawn_task("refine", depends_on=[task_uid])              # gate on an upstream task
+acts.spawn_operator("merge", MergeOp, depends_on=["refiner_0", "refiner_1"])
+```
+
+## The ActionSet
+
+`op.get_actions()` returns an `ActionSet` — one callable per `@act` method, plus the built-in verbs.
+This is what a policy holds and calls:
+
+```python
+acts = op.get_actions()
+
+acts.evaluate(x=1.0)                           # @act shorthand → SPAWN_TASK
+acts.spawn_task("evaluate", x=1.0)             # explicit → SPAWN_TASK
+acts.spawn_workflow("md_refine", candidate=c)  # alias → SPAWN_TASK
+acts.cancel_task(uid)                          # CANCEL_TASK
+acts.update_param("radius", 2.5)               # UPDATE_PARAM
+acts.stop()                                    # Decision(stop=True)
+
+# child operator lifecycle:
+acts.spawn_operator("explorer")                # launch a declared child (no-op if started)
+acts.restart_operator("explorer")             # cancel + reset-to-initial + relaunch
+acts.cancel_operator("explorer")              # cancel in-flight → CANCELED tombstone
+```
+
+`depends_on` is a first-class parameter on every spawning method — it is extracted from kwargs and
+set on `act.depends_on`, never passed through as a task kwarg. `spawn_operator` / `restart_operator`
+accept a single name or a list of names.
+
+For a careful, one-by-one walkthrough of every built-in verb — what each is, what it does, and its
+gotchas — see [Built-in Actions](/concepts/built-in-actions).
+
+For LLM policies, `op.get_actions("openai")` / `"anthropic"` / `"langgraph"` renders every `@act`
+signature and docstring in vendor tool-call format. See [LLM policies](/guides/llm-policies).
+
+## Pre-flight validation
+
+Actions are validated **as a batch before any are applied** (validate-all-then-apply-all). A single
+invalid action raises one `ActionError` listing every problem and aborts the whole batch — an
+invalid action can never leave earlier actions in the same `Decision` partially applied.
+
+## Next
+
+<CardGroup cols={2}>
+  <Card title="Policies" icon="diagram-project" href="/concepts/policies">
+    Where `@decide` returns these decisions.
+  </Card>
+  <Card title="Hierarchical operators" icon="sitemap" href="/guides/hierarchical-operators">
+    `spawn_operator` / `restart_operator` / `cancel_operator` in practice.
+  </Card>
+</CardGroup>

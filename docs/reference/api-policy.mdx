@@ -1,0 +1,56 @@
+---
+title: "API · Policy"
+description: "Policy, LLMPolicy, ChainPolicy, and the @decide decorator."
+---
+
+Imported from `radical.adr`. See [Policies](/concepts/policies) for the overview.
+
+## `@decide`
+
+Marks the policy's decision method. Signature `(self, obs: dict) -> Decision`. **Mandatory** for a
+subclass policy — an empty `Policy` with no composition raises `PolicyError` on first call. The
+method must return a `Decision` or a `TypeError` is raised.
+
+## `Policy`
+
+```python
+Policy(*, primary=None, fallback=None, timeout=None)
+```
+
+Base class **and** composition class. Subclass with `@decide` for a leaf policy; pass `primary` /
+`fallback` to compose.
+
+| Parameter | Type | Meaning |
+|---|---|---|
+| `primary` | `Policy \| None` | First policy tried. |
+| `fallback` | `Policy \| None` | Invoked when `primary` raises, returns `None`, or hangs past `timeout`. |
+| `timeout` | `float \| None` | Per-call timeout (seconds) on the primary. |
+
+| Method | Returns | Description |
+|---|---|---|
+| `decide(obs)` | `Decision` | Dispatches to the `@decide` method, or runs the primary→fallback composition. |
+
+## `LLMPolicy`
+
+```python
+LLMPolicy(*, primary=None, fallback=None, timeout=None)
+```
+
+Thin `Policy` subclass for LLM-driven policies. Subclass it and add `@decide`. See
+[LLM policies](/guides/llm-policies).
+
+| Member | Signature | Description |
+|---|---|---|
+| `render_observation(obs)` | `(dict) -> str` | Convert obs to a prompt string. Default: JSON dump. |
+| `record_usage(...)` | `(*, tokens=None, latency=None, cost=None) -> None` | Append one entry to `usage_history`. |
+| `usage_history` | bounded list | Local-only bookkeeping; never flows through state/snapshot/observe. |
+
+## `ChainPolicy`
+
+A combinator that runs policies in sequence (from `radical.adr.policy.combinators`, re-exported at
+the package root). Use it to layer decision stages.
+
+## See also
+
+- [api-decision](/reference/api-decision) — what `@decide` returns ·
+  [api-goals](/reference/api-goals) — goal proposals · [errors](/reference/errors) — `PolicyError`

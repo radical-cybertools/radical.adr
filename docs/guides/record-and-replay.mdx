@@ -1,0 +1,152 @@
+---
+title: "Record & Replay"
+description: "Capture a live run's observation trace, then A/B different policies offline."
+---
+
+A policy is (mostly) a function of the observation dict. That makes decisions **reproducible**: if
+you capture the exact `obs` sequence a live run produced, you can re-drive a *different* policy
+against it offline — no engine, no tasks — and compare what it would have decided. This is how you
+do deterministic A/B evaluation, regression tests, and debugging.
+
+**Runnable example:** [`examples/11-record-replay.py`](https://github.com/radical-cybertools/radical.adr/blob/main/examples/11-record-replay.py)
+
+## Record during a live run
+
+Attach a `RecordingObserver` — it captures the raw per-cycle `obs` dict (and the resulting decision,
+for inspection) to a JSONL trace:
+
+```python
+from radical.adr import RecordingObserver
+
+op = MyOperator(engine, observer=RecordingObserver("trace.jsonl"))
+await op.run_to_completion()
+```
+
+For the trace to be meaningful, the operator should surface a real evolving metric in `@observe`
+(e.g. `best_score`) so the recorded obs carries signal, not just a cycle counter.
+
+## Link results to their originating actions
+
+Opt in when constructing the operator:
+
+```python
+op = MyOperator(engine, track_action_ids=True,
+                observer=RecordingObserver("trace.jsonl"))
+await op.run_to_completion()
+```
+
+Tracking defaults to `False`: ADR assigns no action IDs, task context keeps its
+existing shape, and unset action IDs are omitted from recorded decisions. With tracking
+enabled, each action in a live recorded decision includes a runtime-assigned `action_id`.
+For work ADR tracks, `snapshot.task_context[uid]` carries the same ID, even if its
+result arrives after the policy has changed. Repeated calls with identical
+arguments have distinct action IDs. To trace a retry, follow the new task's
+`action_id` to its recorded retry action, then read that action's `target_uid`.
+
+The option applies to actions emitted by that operator, including its child
+launch/restart actions. It is not inherited by children. To track a child's own
+actions, construct it with `track_action_ids=True` and register that instance
+using `add_child`. When resuming a checkpoint, saved links survive, but the option
+must be supplied again to track new actions.
+
+For debugging, use a custom observer to record identified decisions and task links
+without changing the policy's observations. Record each newly seen link from
+`on_cycle` snapshots and inspect the final snapshot passed to `on_stop`, when
+present. `on_cycle` runs before actions execute, so new links appear in subsequent
+snapshots. If a run fails during its first cycle, `on_stop` can receive `None`,
+leaving that cycle's launches unexposed through these snapshot callbacks.
+
+`RecordingObserver` stores decisions and the `obs` returned by `@observe`; it does
+not automatically store snapshots or task context. If the policy itself needs
+attribution, add this field to its observation dict. `RecordingObserver` will then
+retain it too. The example includes only results and errors received this cycle:
+
+```python
+"task_events": {
+    key: {
+        "action_id": snapshot.task_context.get(key.split(".", 1)[1], {}).get("action_id"),
+        "value": value,
+    }
+    for key, value in snapshot.observations.items()
+    if key.startswith(("result.", "error."))
+},
+```
+
+Actions that return `None`, cancel work, update parameters, or perform an idempotent
+no-op still have action IDs but create no new task link.
+Links cover only work ADR tracks, not backend subtasks hidden inside an action;
+see [Task context](/reference/api-state#snapshot) for scope and task UID behavior.
+The application decides how to associate these runtime records with its own
+strategy choices or other domain decisions.
+
+## Replay against a different policy — offline
+
+`replay_trace` re-runs a candidate policy against the recorded `obs` sequence, fully offline:
+
+```python
+from radical.adr import replay_trace
+
+decisions = await replay_trace("trace.jsonl", CandidatePolicy())
+```
+
+It reads **only** the recorded `obs` (the recorded `decision` is there for inspection). No engine,
+no `Operator`, no task dispatch — so it is deterministic and fast.
+
+<Note>
+**Replay is open-loop.** It replays the *policy only* — it does not re-execute actions, and the
+candidate's decisions do not change the recorded observation stream. You are comparing *what each
+policy would decide on identical conditions*, not running a new campaign.
+</Note>
+
+### Hierarchical (child-operator) policies
+
+A `SPAWN_OPERATOR` decision carries live Python references (`operator_cls` / `policy`) that aren't
+serialized, so they're not in the trace. To replay a policy that spawns children, pass an
+`operators={name: OperatorClass}` map — replay back-fills `operator_cls` so the decisions are
+well-formed and inspectable (still open-loop, nothing executes):
+
+```python
+decisions = await replay_trace("trace.jsonl", CandidatePolicy(),
+                               operators={"refiner": SearchOperator})
+```
+
+## What it's good for
+
+| Use case | How |
+|---|---|
+| **A/B a new policy** | Record once with policy A; `replay_trace` with policy B; diff the decisions. |
+| **Regression testing** | Commit a trace; assert a policy's decisions stay stable across changes. |
+| **Debugging** | Inspect the exact `obs` the policy saw at the cycle that misbehaved. |
+
+## Observers in general
+
+`RecordingObserver` is one `ObserverBase`. The protocol has three synchronous hooks:
+
+```python
+class ObserverBase(Protocol):
+    def on_start(self, operator_id: str, metadata: dict) -> None: ...
+    def on_cycle(self, snapshot: Snapshot, obs: dict, decision: Decision) -> None: ...
+    def on_stop(self, final: Snapshot | None, reason: str) -> None: ...
+```
+
+`JsonlObserver` emits one JSON line per lifecycle event (`operator_start`, `cycle_start`,
+`decision`, `task_*`, `goal_*`, `operator_stop`) — feeding the HTML replay dashboards
+(`demo-visualization.html` force-directed, `demo-visualization-timeline.html` Gantt). See
+[Logging & observability](/guides/logging-and-observability).
+
+## Run it
+
+```bash
+python examples/11-record-replay.py
+```
+
+## Next
+
+<CardGroup cols={2}>
+  <Card title="Logging & observability" icon="eye" href="/guides/logging-and-observability">
+    Observers, JSONL events, and dashboards.
+  </Card>
+  <Card title="Policies" icon="diagram-project" href="/concepts/policies">
+    Why a policy is replayable.
+  </Card>
+</CardGroup>
