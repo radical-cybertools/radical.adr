@@ -44,7 +44,7 @@ class _RetryPolicy(Policy):
         if obs["errors"] and not self.retried:
             self.retried = True
             return Decision(actions=[self._act.retry_task(obs["errors"][0])])
-        if obs["cycle"] >= 12 or (self.retried and obs["n_flaky"] >= 2):
+        if self.retried and obs["n_flaky"] >= 2:
             return Decision(stop=True)
         return Decision()
 
@@ -52,8 +52,11 @@ class _RetryPolicy(Policy):
 @pytest.mark.parametrize("track_action_ids", [False, True])
 async def test_retry_task_respawns_failed_task(engine, tmp_path, track_action_ids):
     path = tmp_path / "trace.jsonl"
+    # The policy stops on the retry, not a cycle count: the first error waits for
+    # a new worker process to import this module, which can outlast a fixed number
+    # of idle cycles (notably on macOS). max_runtime only bounds a regression.
     op = _RetryOp(engine, observer=RecordingObserver(str(path)),
-                  track_action_ids=track_action_ids)
+                  track_action_ids=track_action_ids, max_runtime=30.0)
     op.policy = _RetryPolicy(op)
     async for _ in op.run():
         pass

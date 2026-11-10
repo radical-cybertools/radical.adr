@@ -51,8 +51,8 @@ class _FanChildPolicy(Policy):
             return Decision(stop=True)
         if obs["cycle"] == 0:
             return Decision(actions=[self._act.evaluate(x=1.0)])
-        if obs["cycle"] >= 10:        # safety
-            return Decision(stop=True)
+        # No cycle cap: evaluate waits for a new worker process to start, which can
+        # outlast a fixed number of idle cycles. The parent's max_runtime bounds it.
         return Decision()
 
 
@@ -109,14 +109,11 @@ class _FanParentPolicy(Policy):
 
         if obs["merge"].done:
             return Decision(stop=True)
-
-        if obs["cycle"] >= 80:        # safety stop
-            return Decision(stop=True)
         return Decision()
 
 
 async def test_fanout_dependency_ordering(engine):
-    parent = _FanParent(engine)
+    parent = _FanParent(engine, max_runtime=30.0)    # bounds a regression
     parent.policy = _FanParentPolicy(parent)
     await parent.run_to_completion()
 
@@ -173,14 +170,11 @@ class _RestartPolicy(Policy):
                 self.restarted = True
                 return Decision(actions=[self._act.restart_operator("worker")])
             return Decision(stop=True)
-
-        if obs["cycle"] >= 80:        # safety stop
-            return Decision(stop=True)
         return Decision()
 
 
 async def test_restart_operator_runs_child_again(engine):
-    parent = _RestartParent(engine)
+    parent = _RestartParent(engine, max_runtime=30.0)    # bounds a regression
     parent.policy = _RestartPolicy(parent)
     await parent.run_to_completion()
 
